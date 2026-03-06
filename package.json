@@ -1,0 +1,82 @@
+{
+  "name": "homebridge-ring-hksv",
+  "displayName": "Homebridge Ring HKSV",
+  "version": "14.3.1",
+  "description": "Homebridge plugin for Ring devices with HomeKit Secure Video support",
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "rm -rf lib && tsc && cp -r ./homebridge-ui/public ./lib/homebridge-ui/public/",
+    "lint": "eslint .",
+    "dev": "concurrently -c yellow,blue --kill-others \"npm:dev:build\" \"npm:dev:run\" ",
+    "dev:build": "tsc --watch --preserveWatchOutput",
+    "dev:run": "RING_DEBUG=true node --watch ./node_modules/.bin/homebridge -U ./.homebridge -P ./node_modules"
+  },
+  "dependencies": {
+    "@homebridge/camera-utils": "^3.0.0",
+    "@homebridge/plugin-ui-utils": "^2.1.2",
+    "ring-client-api": "14.3.0",
+    "werift": "0.22.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@typescript-eslint/parser": "^8.54.0",
+    "concurrently": "^9.2.1",
+    "eslint": "9.39.2",
+    "globals": "17.3.0",
+    "homebridge": "1.11.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.54.0"
+  },
+  "engines": {
+    "node": "^20 || ^22 || ^24",
+    "homebridge": ">=1.4.0 || ^2.0.0-beta.0"
+  },
+  "author": "trinityhades",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trinityhades/homebridge-ring-hksv.git"
+  },
+  "bugs": {
+    "url": "https://github.com/trinityhades/homebridge-ring-hksv/issues"
+  },
+  "homepage": "https://github.com/trinityhades/homebridge-ring-hksv#readme",
+  "funding": [
+    {
+      "type": "paypal",
+      "url": "https://www.paypal.me/dustingreif"
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/dgreif"
+    }
+  ],
+  "files": [
+    "branding",
+    "CHANGELOG.md",
+    "config.schema.json",
+    "lib",
+    "media"
+  ],
+  "keywords": [
+    "homebridge",
+    "homebridge-plugin",
+    "ring",
+    "hksv",
+    "homekit-secure-video",
+    "doorbell",
+    "doorbot",
+    "camera",
+    "alarm",
+    "smart",
+    "light",
+    "beam",
+    "security",
+    "category-security",
+    "category-lighting",
+    "category-video",
+    "category-hubs",
+    "category-outdoor"
+  ]
+}

@@ -1,0 +1,297 @@
+{
+  "pluginAlias": "Homebridge Ring HKSV",
+  "pluginType": "platform",
+  "singular": true,
+  "customUi": true,
+  "customUiPath": "./lib/homebridge-ui",
+  "customUiDevServer": "http://localhost:3000/api/plugins/settings-ui/homebridge-ring-hksv",
+  "headerDisplay": "See [the wiki](https://github.com/dgreif/ring/wiki/Refresh-Tokens) for details on generating a refresh token",
+  "accountLinkingHeader": "Please supply your Ring credentials.  These will be used to contact the Ring servers and generate a unique access token for your account.  Your email and password will be sent directly to Ring and will not be stored anywhere.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "refreshToken": {
+        "title": "Refresh Token",
+        "type": "string",
+        "description": "Click \"Generate New Refresh Token\" above to change accounts or if your refresh token has expired",
+        "placeholder": "Refresh Token"
+      },
+      "alarmOnEntryDelay": {
+        "title": "Alarm on Entry Delay",
+        "type": "boolean",
+        "description": "If enabled, HomeKit will register a delayed entry event as a triggered alarm. Useful if you want to know as soon as someone opens a door with the alarm armed"
+      },
+      "enableHksv": {
+        "title": "Enable HKSV (Experimental)",
+        "type": "boolean",
+        "description": "Enables HomeKit Secure Video services for supported Ring cameras. This implementation is currently in-progress."
+      },
+      "disableHksvOnBattery": {
+        "title": "Disable HKSV On Battery Cameras",
+        "type": "boolean",
+        "description": "If enabled, HKSV is disabled on battery-powered cameras to reduce battery and network impact.",
+        "default": true
+      },
+      "hksvPrebufferLengthMs": {
+        "title": "HKSV Prebuffer Length (ms)",
+        "type": "integer",
+        "minimum": 4000,
+        "maximum": 16000,
+        "description": "How much pre-event video is retained for HKSV. Minimum is 4000ms."
+      },
+      "hksvFragmentLengthMs": {
+        "title": "HKSV Fragment Length (ms)",
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 8000,
+        "description": "Target recording fragment duration for HKSV fragmented MP4 output."
+      },
+      "hksvMaxRecordingSeconds": {
+        "title": "HKSV Max Recording Seconds",
+        "type": "integer",
+        "minimum": 5,
+        "maximum": 300,
+        "description": "Optional safety cap for a single HKSV recording stream duration."
+      },
+      "cameraVideoCodec": {
+        "title": "Camera Video Codec",
+        "type": "string",
+        "description": "Preferred ffmpeg H.264 encoder for camera paths.",
+        "oneOf": [
+          {
+            "title": "h264_videotoolbox",
+            "enum": ["h264_videotoolbox"]
+          },
+          {
+            "title": "libx264",
+            "enum": ["libx264"]
+          }
+        ]
+      },
+      "hideLightGroups": {
+        "title": "Hide Light Groups",
+        "type": "boolean",
+        "description": "Hides Ring lighting groups, allowing you to group lights differently in HomeKit than how you group them in the Ring app"
+      },
+      "hideDoorbellSwitch": {
+        "title": "Hide Doorbell Programmable Switch",
+        "type": "boolean",
+        "description": "Hides the Programmable Switch for Ring doorbells.  This switch is only useful for triggering an automation when the doorbell is pressed, so most users can safely hide it"
+      },
+      "hideCameraLight": {
+        "title": "Hide Camera Light",
+        "type": "boolean"
+      },
+      "hideCameraMotionSensor": {
+        "title": "Hide Camera Motion Sensors",
+        "type": "boolean"
+      },
+      "hideCameraSirenSwitch": {
+        "title": "Hide Camera Siren Switch",
+        "type": "boolean"
+      },
+      "hideInHomeDoorbellSwitch": {
+        "title": "Hide In-Home Doorbell Switch",
+        "type": "boolean"
+      },
+      "hideAlarmSirenSwitch": {
+        "title": "Hide Alarm Siren Switch",
+        "type": "boolean",
+        "description": "Hides switch that allows you to turn on the siren of the Ring Alarm.  Enable this is your Siri commands keep setting off the siren and you don't care about having the switch"
+      },
+      "externalCameraIdSalt": {
+        "title": "External Camera ID Salt",
+        "type": "string",
+        "description": "Advanced recovery option: changing this forces new HomeKit identities for Ring camera external accessories."
+      },
+      "showPanicButtons": {
+        "title": "Show Panic Buttons",
+        "type": "boolean",
+        "description": "Creates a new `Panic Buttons` device in HomeKit with `Burglar Alarm` and `Fire Alarm` switches.  **Use these at your own risk.  I do not guarantee functionality in case of emergency, nor do I take responsibility for any false alarms**.  These function just like the SOS sliders in the Ring app."
+      },
+      "ffmpegPath": {
+        "title": "Custom FFmpeg Path",
+        "type": "string",
+        "description": "A custom path to the ffmpeg executable. By default, the static binaries built in ffmpeg-for-homebridge will be used. If you prefer to use your own version of ffmpeg, you can pass a complete path, or simply [ ffmpeg ] to use ffmpeg from your PATH."
+      },
+      "nightModeBypassFor": {
+        "title": "Night Mode as Bypass For Mode",
+        "type": "string",
+        "description": "Allows you to use Night mode to \"Bypass and Arm\" a Ring Alarm.  If set and Night mode is activated from HomeKit, any open contact sensors will automatically be bypassed and the alarm will be set to the mode selected here.",
+        "oneOf": [
+          {
+            "title": "Home",
+            "enum": ["some"]
+          },
+          {
+            "title": "Away",
+            "enum": ["all"]
+          }
+        ]
+      },
+      "avoidSnapshotBatteryDrain": {
+        "title": "Avoid Snapshot Battery Drain",
+        "type": "boolean",
+        "description": "Causes snapshots for battery cameras to be fetched at a minimum 10 minute interval to avoid draining the battery.  This is useful if have the Home app open constantly, causing frequent snapshot requests."
+      },
+      "beamDurationSeconds": {
+        "title": "Ring Smart Lighting Timer",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 32767,
+        "description": "Ring Smart Lighting will only stay on for a set amount of time.  You can specify that duration here (in seconds).  If not specified, the light will stay on for the last duration used within the Ring app for individual lights, and 60 seconds for lighting groups.  Max value is 32767 which is ~9.1 hours"
+      },
+      "debug": {
+        "title": "Debug Logging",
+        "type": "boolean",
+        "description": "Turns on additional logging.  In particular, ffmpeg logging."
+      },
+      "disableLogs": {
+        "title": "Disable All Logging",
+        "type": "boolean",
+        "description": "Disables all logs generated by the Ring plugin"
+      },
+      "cameraStatusPollingSeconds": {
+        "title": "Camera/Chime Status Polling",
+        "type": "integer",
+        "minimum": 1,
+        "placeholder": "Get camera status every __ seconds",
+        "description": "Camera/Chime status (such as light/siren/volume/snooze state) does not update live and must be fetched periodically.  By default this is done every 20 seconds"
+      },
+      "locationModePollingSeconds": {
+        "title": "Location Mode Polling",
+        "type": "integer",
+        "minimum": 0,
+        "placeholder": "Get current Location Mode every __ seconds",
+        "description": "Location Modes do not update live and must be fetched periodically.  By default this is done every 20 seconds for locations that have Location Modes enabled, and that do not have a Ring Alarm.  The Location Mode switch can be hidden by setting this option to 0"
+      },
+      "hideDeviceIds": {
+        "title": "Hide Device ID",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "locationIds": {
+        "title": "Location ID",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "onlyDeviceTypes": {
+        "title": "Device Types",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      }
+    },
+    "required": ["refreshToken"]
+  },
+  "layout": [
+    {
+      "type": "flex",
+      "flex-flow": "row wrap",
+      "items": ["refreshToken"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Optional Configuration",
+      "expandable": true,
+      "items": [
+        "alarmOnEntryDelay",
+        "enableHksv",
+        "disableHksvOnBattery",
+        "hksvPrebufferLengthMs",
+        "hksvFragmentLengthMs",
+        "hksvMaxRecordingSeconds",
+        "cameraVideoCodec",
+        "hideLightGroups",
+        "hideDoorbellSwitch",
+        "hideCameraLight",
+        "hideCameraMotionSensor",
+        "hideCameraSirenSwitch",
+        "hideInHomeDoorbellSwitch",
+        "hideAlarmSirenSwitch",
+        "externalCameraIdSalt",
+        "showPanicButtons",
+        "nightModeBypassFor",
+        "avoidSnapshotBatteryDrain",
+        "beamDurationSeconds",
+        "debug",
+        "disableLogs",
+        "cameraStatusPollingSeconds",
+        "locationModePollingSeconds",
+        {
+          "key": "hideDeviceIds",
+          "add": "Add Another Device ID",
+          "type": "array",
+          "items": [
+            {
+              "type": "div",
+              "displayFlex": true,
+              "flex-direction": "row",
+              "items": [
+                {
+                  "key": "hideDeviceIds[]",
+                  "placeholder": "Device ID"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "help",
+          "helpvalue": "<p>If you would like to hide individual devices in HomeKit, enter the desired device IDs above.  The ID for each device is logged every time homebridge starts.</p>"
+        },
+        {
+          "key": "locationIds",
+          "type": "array",
+          "items": [
+            {
+              "type": "div",
+              "displayFlex": true,
+              "flex-direction": "row",
+              "items": [
+                {
+                  "key": "locationIds[]",
+                  "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or xxxxx-xxxxx-x"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "help",
+          "helpvalue": "<p>If you have multiple locations configured in Ring but only want some of them in HomeKit, enter the desired location IDs above.  The ID for each location is logged every time homebridge starts.</p>"
+        },
+        {
+          "key": "onlyDeviceTypes",
+          "type": "array",
+          "items": [
+            {
+              "type": "div",
+              "displayFlex": true,
+              "flex-direction": "row",
+              "items": [
+                {
+                  "key": "onlyDeviceTypes[]",
+                  "placeholder": "Device Type"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "help",
+          "helpvalue": "<p>If you only want to display certain device types, you can specify a those device types here.  All other device types will be removed from HomeKit.  Example: security-panel to show your alarm, hp_cam_v1 to show floodlight cams.</p>"
+        }
+      ]
+    }
+  ]
+}

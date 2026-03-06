@@ -1,0 +1,14 @@
+lib
+node_modules
+.idea
+.DS_Store
+.env
+json-data
+yarn.lock
+.homebridge
+.hoobs
+.turbo
+.gitattributes
+
+# GitShift personal account configuration
+**/github-accounts.json
