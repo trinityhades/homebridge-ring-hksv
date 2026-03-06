@@ -17,8 +17,8 @@
 
 This project is based on Dustin Greif's original Ring Homebridge ecosystem:
 
-- Upstream plugin: `dgreif/homebridge-ring`
-- Upstream API library: `dgreif/ring-client-api`
+- Upstream plugin: [dgreif/homebridge-ring](https://github.com/dgreif/homebridge-ring)
+- Upstream API library: [dgreif/ring-client-api](https://github.com/dgreif/ring-client-api)
 
 Big thanks to Dustin and all upstream contributors. This fork reuses and extends that foundation.
 

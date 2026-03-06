@@ -1,3 +1,11 @@
+# homebridge-ring-hksv
+
+## 14.3.2
+
+### Main Changes
+
+- [`b9dbe7e`](https://github.com/dgreif/ring/commit/b9dbe7e) Thanks [@dgreif](https://github.com/dgreif)! - This is the first version of homebridge-ring-hksv, which is a fork of homebridge-ring with support for HomeKit Secure Video (HKSV). 
+
 # homebridge-ring
 
 ## 14.3.0
