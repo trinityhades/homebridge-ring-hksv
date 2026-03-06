@@ -1,10 +1,10 @@
 import type { RingDevice } from 'ring-client-api'
-import { RingDeviceType } from 'ring-client-api'
 import { hap } from './hap.ts'
 import type { RingPlatformConfig } from './config.ts'
 import { BaseDeviceAccessory } from './base-device-accessory.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { logInfo } from 'ring-client-api/util'
+import { RingDeviceType } from './ring-values.ts'
 
 export class Beam extends BaseDeviceAccessory {
   private isLightGroup

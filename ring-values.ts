@@ -1,0 +1,58 @@
+import type { AlarmState } from 'ring-client-api'
+
+export const RingDeviceType = {
+  BaseStation: 'hub.redsky',
+  BaseStationPro: 'hub.kili',
+  Keypad: 'security-keypad',
+  SecurityPanel: 'security-panel',
+  ContactSensor: 'sensor.contact',
+  MotionSensor: 'sensor.motion',
+  FloodFreezeSensor: 'sensor.flood-freeze',
+  FreezeSensor: 'sensor.freeze',
+  TemperatureSensor: 'sensor.temperature',
+  WaterSensor: 'sensor.water',
+  TiltSensor: 'sensor.tilt',
+  GlassbreakSensor: 'sensor.glassbreak',
+  SmokeAlarm: 'alarm.smoke',
+  CoAlarm: 'alarm.co',
+  SmokeCoListener: 'listener.smoke-co',
+  MultiLevelSwitch: 'switch.multilevel',
+  MultiLevelBulb: 'switch.multilevel.bulb',
+  Switch: 'switch',
+  BeamsMotionSensor: 'motion-sensor.beams',
+  BeamsSwitch: 'switch.beams',
+  BeamsMultiLevelSwitch: 'switch.multilevel.beams',
+  BeamsLightGroupSwitch: 'group.light-group.beams',
+  BeamsTransformerSwitch: 'switch.transformer.beams',
+  BeamsDevice: 'device.beams',
+  RetrofitZone: 'sensor.zone',
+  Thermostat: 'temperature-control.thermostat',
+  Sensor: 'sensor',
+  RingNetAdapter: 'adapter.ringnet',
+  CodeVault: 'access-code.vault',
+  SecurityAccessCode: 'access-code',
+  ZigbeeAdapter: 'adapter.zigbee',
+  ZWaveAdapter: 'adapter.zwave',
+  ZWaveExtender: 'range-extender.zwave',
+  PanicButton: 'security-panic',
+  UnknownZWave: 'unknown.zwave',
+  WaterValve: 'valve.water',
+  KiddeSmokeCoAlarm: 'comp.bluejay.sensor_bluejay_wsc',
+} as const
+
+export const RingDeviceCategory = {
+  Outlets: 1,
+  Fans: 17,
+} as const
+
+export const allAlarmStates: AlarmState[] = [
+  'burglar-alarm',
+  'entry-delay',
+  'fire-alarm',
+  'co-alarm',
+  'panic',
+  'user-verified-burglar-alarm',
+  'user-verified-co-or-fire-alarm',
+  'burglar-accelerated-alarm',
+  'fire-accelerated-alarm',
+]

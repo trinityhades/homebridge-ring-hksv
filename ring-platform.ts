@@ -1,12 +1,4 @@
-import {
-  RingApi,
-  RingCamera,
-  RingChime,
-  RingDevice,
-  RingDeviceCategory,
-  RingDeviceType,
-  RingIntercom,
-} from 'ring-client-api'
+import type { RingCamera, RingChime, RingDevice, RingIntercom } from 'ring-client-api'
 import { hap } from './hap.ts'
 import type {
   API,
@@ -15,7 +7,6 @@ import type {
   PlatformAccessory,
   PlatformConfig,
 } from 'homebridge'
-import { SecurityPanel } from './security-panel.ts'
 import { Chime } from './chime.ts'
 import { BrightnessOnly } from './brightness-only.ts'
 import { ContactSensor } from './contact-sensor.ts'
@@ -31,12 +22,10 @@ import {
   getSystemId,
   updateHomebridgeConfig,
 } from './config.ts'
-import { Beam } from './beam.ts'
 import { MultiLevelSwitch } from './multi-level-switch.ts'
 import { Fan } from './fan.ts'
 import { Outlet } from './outlet.ts'
 import { Switch } from './switch.ts'
-import { Camera } from './camera.ts'
 import { PanicButtons } from './panic-buttons.ts'
 import type { RefreshTokenAuth } from 'ring-client-api/rest-client'
 import { logError, logInfo, useLogger } from 'ring-client-api/util'
@@ -46,11 +35,41 @@ import { FreezeSensor } from './freeze-sensor.ts'
 import { TemperatureSensor } from './temperature-sensor.ts'
 import { WaterSensor } from './water-sensor.ts'
 import { LocationModeSwitch } from './location-mode-switch.ts'
-import { Thermostat } from './thermostat.ts'
 import { UnknownZWaveSwitchSwitch } from './unknown-zwave-switch.ts'
 import { generateMacAddress } from './util.ts'
 import { Intercom } from './intercom.ts'
 import { Valve } from './valve.ts'
+import { RingDeviceCategory, RingDeviceType } from './ring-values.ts'
+
+type AccessoryClass = new (...args: any[]) => BaseAccessory<any>
+type LazyAccessoryClass = 'beam' | 'security-panel' | 'thermostat'
+type AccessoryMatch = AccessoryClass | LazyAccessoryClass | null
+
+let cameraAccessoryPromise: Promise<AccessoryClass> | undefined
+
+function loadCameraAccessoryClass() {
+  cameraAccessoryPromise ??= import('./camera.ts').then(
+    ({ Camera }) => Camera as AccessoryClass,
+  )
+
+  return cameraAccessoryPromise
+}
+
+function hasUsableRefreshToken(refreshToken?: string) {
+  if (!refreshToken) {
+    return false
+  }
+
+  const normalized = refreshToken.trim()
+
+  if (normalized.length < 32) {
+    return false
+  }
+
+  return !/^(refresh token|refresh-token|token|test|example|changeme)$/i.test(
+    normalized,
+  ) && !/your-refresh-token/i.test(normalized)
+}
 
 const ignoreHiddenDeviceTypes: string[] = [
   RingDeviceType.RingNetAdapter,
@@ -68,7 +87,7 @@ export const pluginName = 'homebridge-ring-hksv'
 
 function getAccessoryClass(
   device: RingDevice,
-): (new (...args: any[]) => BaseAccessory<RingDevice>) | null {
+): AccessoryMatch {
   const { deviceType } = device
 
   if (device.data.status === 'disabled') {
@@ -88,7 +107,7 @@ function getAccessoryClass(
     case RingDeviceType.FreezeSensor:
       return FreezeSensor
     case RingDeviceType.SecurityPanel:
-      return SecurityPanel
+      return 'security-panel'
     case RingDeviceType.BaseStation:
     case RingDeviceType.BaseStationPro:
     case RingDeviceType.Keypad:
@@ -105,17 +124,15 @@ function getAccessoryClass(
     case RingDeviceType.BeamsMultiLevelSwitch:
     case RingDeviceType.BeamsTransformerSwitch:
     case RingDeviceType.BeamsLightGroupSwitch:
-      return Beam
+      return 'beam'
     case RingDeviceType.MultiLevelSwitch:
-      return device instanceof RingDevice &&
-        device.categoryId === RingDeviceCategory.Fans
+      return device.categoryId === RingDeviceCategory.Fans
         ? Fan
         : MultiLevelSwitch
     case RingDeviceType.MultiLevelBulb:
       return MultiLevelSwitch
     case RingDeviceType.Switch:
-      return device instanceof RingDevice &&
-        device.categoryId === RingDeviceCategory.Outlets
+      return device.categoryId === RingDeviceCategory.Outlets
         ? Outlet
         : Switch
     case RingDeviceType.TemperatureSensor:
@@ -123,7 +140,7 @@ function getAccessoryClass(
     case RingDeviceType.WaterSensor:
       return WaterSensor
     case RingDeviceType.Thermostat:
-      return Thermostat
+      return 'thermostat'
     case RingDeviceType.WaterValve:
       return Valve
     case RingDeviceType.UnknownZWave:
@@ -184,11 +201,15 @@ export class RingPlatform implements DynamicPlatformPlugin {
 
     this.api.on('didFinishLaunching', () => {
       this.log.debug('didFinishLaunching')
-      if (config.refreshToken) {
+      if (hasUsableRefreshToken(config.refreshToken)) {
         this.connectToApi().catch((e) => {
           this.log.error('Error connecting to API')
           this.log.error(e)
         })
+      } else if (config.refreshToken) {
+        this.log.warn(
+          'Refresh token appears to be a placeholder. Skipping Ring API connection until a valid token is configured.',
+        )
       } else {
         this.log.warn(
           'Plugin is not configured. See the standalone README for homebridge-ring-hksv setup instructions.',
@@ -208,6 +229,15 @@ export class RingPlatform implements DynamicPlatformPlugin {
   }
 
   async connectToApi() {
+    const [{ RingApi }, { Beam }, { Camera }, { SecurityPanel }, { Thermostat }] =
+      await Promise.all([
+        import('ring-client-api'),
+        import('./beam.ts'),
+        loadCameraAccessoryClass().then((Camera) => ({ Camera })),
+        import('./security-panel.ts'),
+        import('./thermostat.ts'),
+      ])
+
     const { api, config } = this,
       systemId = getSystemId(api.user.storagePath()),
       ringApi = new RingApi({
@@ -227,44 +257,78 @@ export class RingPlatform implements DynamicPlatformPlugin {
       logInfo(`  locationId: ${location.id} - ${location.name}`)
     })
 
+    const getLoadedAccessoryClass = (
+      device: RingDevice,
+    ): AccessoryClass | null => {
+      const accessoryClass = getAccessoryClass(device)
+
+      if (
+        accessoryClass !== 'beam' &&
+        accessoryClass !== 'security-panel' &&
+        accessoryClass !== 'thermostat'
+      ) {
+        return accessoryClass
+      }
+
+      switch (accessoryClass) {
+        case 'beam':
+          return Beam as AccessoryClass
+        case 'thermostat':
+          return Thermostat as AccessoryClass
+        case 'security-panel':
+          return SecurityPanel as AccessoryClass
+        default:
+          return null
+      }
+    }
+
     await Promise.all(
       locations.map(async (location) => {
         const devices = await location.getDevices(),
           { cameras, chimes, intercoms } = location,
-          allDevices = [...devices, ...cameras, ...chimes, ...intercoms],
           securityPanel = devices.find(
             (x) => x.deviceType === RingDeviceType.SecurityPanel,
           ),
           debugPrefix = debug ? 'TEST ' : '',
-          hapDevices = allDevices.map((device) => {
-            const isCamera = device instanceof RingCamera,
-              cameraIdentitySalt =
-                isCamera && config.externalCameraIdSalt
-                  ? `-${config.externalCameraIdSalt}`
-                  : '',
-              cameraIdDifferentiator = isCamera ? 'camera' : '', // this forces bridged cameras from old version of the plugin to be seen as "stale"
-              AccessoryClass = (
-                device instanceof RingCamera
-                  ? Camera
-                  : device instanceof RingChime
-                  ? Chime
-                  : device instanceof RingIntercom
-                  ? Intercom
-                  : getAccessoryClass(device)
-              ) as (new (...args: any[]) => BaseAccessory<any>) | null
-
-            return {
+          hapDevices = [
+            ...devices.map((device) => ({
               deviceType: device.deviceType as string,
               device: device as any,
-              isCamera,
+              isCamera: false,
+              id: device.id.toString(),
+              name: device.name,
+              AccessoryClass: getLoadedAccessoryClass(device),
+            })),
+            ...cameras.map((device) => ({
+              deviceType: device.deviceType as string,
+              device: device as any,
+              isCamera: true,
               id:
                 device.id.toString() +
-                cameraIdDifferentiator +
-                cameraIdentitySalt,
+                'camera' +
+                (config.externalCameraIdSalt
+                  ? `-${config.externalCameraIdSalt}`
+                  : ''),
               name: device.name,
-              AccessoryClass,
-            }
-          }),
+              AccessoryClass: Camera,
+            })),
+            ...chimes.map((device) => ({
+              deviceType: device.deviceType as string,
+              device: device as any,
+              isCamera: false,
+              id: device.id.toString(),
+              name: device.name,
+              AccessoryClass: Chime,
+            })),
+            ...intercoms.map((device) => ({
+              deviceType: device.deviceType as string,
+              device: device as any,
+              isCamera: false,
+              id: device.id.toString(),
+              name: device.name,
+              AccessoryClass: Intercom,
+            })),
+          ],
           hideDeviceIds = config.hideDeviceIds || [],
           onlyDeviceTypes = config.onlyDeviceTypes?.length
             ? config.onlyDeviceTypes

@@ -5,11 +5,11 @@ import type {
   RingDevice,
   RingDeviceData,
 } from 'ring-client-api'
-import { allAlarmStates, RingDeviceType } from 'ring-client-api'
 import { hap } from './hap.ts'
 import type { RingPlatformConfig } from './config.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { logError, logInfo } from 'ring-client-api/util'
+import { allAlarmStates, RingDeviceType } from './ring-values.ts'
 
 function isValidNightModeBypass(mode?: AlarmMode) {
   return mode && (mode === 'all' || mode === 'some')

@@ -4,11 +4,11 @@ import { combineLatest } from 'rxjs'
 import { distinctUntilChanged, map, switchMap } from 'rxjs/operators'
 
 import type { RingDevice, ThermostatMode } from 'ring-client-api'
-import { RingDeviceType } from 'ring-client-api'
 import { logDebug, logError, logInfo } from 'ring-client-api/util'
 import { BaseDeviceAccessory } from './base-device-accessory.ts'
 import type { RingPlatformConfig } from './config.ts'
 import { hap } from './hap.ts'
+import { RingDeviceType } from './ring-values.ts'
 
 export class Thermostat extends BaseDeviceAccessory {
   private onTemperature: Observable<number | undefined>
