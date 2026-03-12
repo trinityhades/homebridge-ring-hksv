@@ -1,5 +1,11 @@
 # homebridge-ring-hksv
 
+## Unreleased
+
+### Minor Changes
+
+- Add `homeKitAccessoryTag` to append a custom tag to Ring accessory names and generated HomeKit identities. This helps expose the same physical camera/accessory as a distinct HomeKit device for debugging or multi-home testing.
+
 ## 14.3.2
 
 ### Main Changes

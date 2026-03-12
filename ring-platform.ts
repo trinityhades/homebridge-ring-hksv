@@ -210,6 +210,13 @@ export class RingPlatform implements DynamicPlatformPlugin {
   async connectToApi() {
     const { api, config } = this,
       systemId = getSystemId(api.user.storagePath()),
+      configuredHomeKitAccessoryTag = config.homeKitAccessoryTag?.trim(),
+      accessoryIdSuffix = configuredHomeKitAccessoryTag
+        ? `-${configuredHomeKitAccessoryTag}`
+        : '',
+      accessoryNameSuffix = configuredHomeKitAccessoryTag
+        ? ` (${configuredHomeKitAccessoryTag})`
+        : '',
       ringApi = new RingApi({
         controlCenterDisplayName,
         ...config,
@@ -260,8 +267,9 @@ export class RingPlatform implements DynamicPlatformPlugin {
               id:
                 device.id.toString() +
                 cameraIdDifferentiator +
-                cameraIdentitySalt,
-              name: device.name,
+                cameraIdentitySalt +
+                accessoryIdSuffix,
+              name: device.name + accessoryNameSuffix,
               AccessoryClass,
             }
           }),
@@ -275,8 +283,8 @@ export class RingPlatform implements DynamicPlatformPlugin {
             deviceType: securityPanel.deviceType,
             device: securityPanel,
             isCamera: false,
-            id: securityPanel.id.toString() + 'panic',
-            name: 'Panic Buttons',
+            id: securityPanel.id.toString() + 'panic' + accessoryIdSuffix,
+            name: 'Panic Buttons' + accessoryNameSuffix,
             AccessoryClass: PanicButtons,
           })
         }
@@ -289,8 +297,8 @@ export class RingPlatform implements DynamicPlatformPlugin {
             deviceType: 'location.mode',
             device: location,
             isCamera: false,
-            id: location.id + 'mode',
-            name: location.name + ' Mode',
+            id: location.id + 'mode' + accessoryIdSuffix,
+            name: location.name + ' Mode' + accessoryNameSuffix,
             AccessoryClass: LocationModeSwitch,
           })
         }

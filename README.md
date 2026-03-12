@@ -31,6 +31,7 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | `hksvPrebufferLengthMs` | HKSV prebuffer duration (minimum 4000ms) |
 | `hksvFragmentLengthMs` | HKSV fragment duration target |
 | `hksvMaxRecordingSeconds` | Optional safety cap for a recording session |
+| `homeKitAccessoryTag` | Appends a tag to accessory names and HomeKit IDs so the same Ring device can be exposed as a distinct HomeKit accessory for debugging/testing |
 | `cameraVideoCodec` | Preferred H.264 encoder (`h264_videotoolbox` or `libx264`) |
 | `hideDoorbellSwitch` / `hideCameraMotionSensor` / `hideCameraSirenSwitch` | Hides specific HomeKit-exposed services |
 | `showPanicButtons` | Adds panic switches (use with caution) |
@@ -65,6 +66,18 @@ Add a platform block with your Ring refresh token:
   "refreshToken": "your-refresh-token"
 }
 ```
+
+If you need Home app to treat the same physical Ring device as a different HomeKit accessory, add a `homeKitAccessoryTag`:
+
+```json
+{
+  "platform": "RingHKSV",
+  "refreshToken": "your-refresh-token",
+  "homeKitAccessoryTag": "Debug Home A"
+}
+```
+
+Changing `homeKitAccessoryTag` updates both the exposed accessory name and the generated HomeKit identity, which changes the advertised MAC-style identifier shown during manual camera pairing.
 
 ## HKSV Status
 

@@ -15,6 +15,7 @@ export interface RingPlatformConfig extends RingApiOptions {
   hksvPrebufferLengthMs?: number
   hksvFragmentLengthMs?: number
   hksvMaxRecordingSeconds?: number
+  homeKitAccessoryTag?: string
   cameraVideoCodec?: 'h264_videotoolbox' | 'libx264'
   beamDurationSeconds?: number
   ffmpegPath?: string

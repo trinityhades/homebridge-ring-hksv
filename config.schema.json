@@ -53,6 +53,11 @@
         "maximum": 300,
         "description": "Optional safety cap for a single HKSV recording stream duration."
       },
+      "homeKitAccessoryTag": {
+        "title": "HomeKit Accessory Tag",
+        "type": "string",
+        "description": "Optional tag appended to Ring accessory names and HomeKit identities. Change this to expose the same Ring devices as distinct accessories in Home app for debugging or multi-home testing."
+      },
       "cameraVideoCodec": {
         "title": "Camera Video Codec",
         "type": "string",
@@ -210,6 +215,7 @@
         "hksvPrebufferLengthMs",
         "hksvFragmentLengthMs",
         "hksvMaxRecordingSeconds",
+        "homeKitAccessoryTag",
         "cameraVideoCodec",
         "hideLightGroups",
         "hideDoorbellSwitch",
