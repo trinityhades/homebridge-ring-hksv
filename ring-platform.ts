@@ -175,7 +175,7 @@ export class RingPlatform implements DynamicPlatformPlugin {
     }
 
     if (!config) {
-      logInfo('No configuration found for platform RingHKSV')
+      logInfo('No configuration found for platform Homebridge Ring HKSV')
       return
     }
 

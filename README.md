@@ -62,7 +62,7 @@ Add a platform block with your Ring refresh token:
 
 ```json
 {
-  "platform": "RingHKSV",
+  "platform": "Homebridge Ring HKSV",
   "refreshToken": "your-refresh-token"
 }
 ```
@@ -71,7 +71,7 @@ If you need Home app to treat the same physical Ring device as a different HomeK
 
 ```json
 {
-  "platform": "RingHKSV",
+  "platform": "Homebridge Ring HKSV",
   "refreshToken": "your-refresh-token",
   "homeKitAccessoryTag": "Debug Home A"
 }
