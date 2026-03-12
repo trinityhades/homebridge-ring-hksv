@@ -63,7 +63,7 @@ const ignoreHiddenDeviceTypes: string[] = [
   RingDeviceType.PanicButton,
 ]
 
-export const platformName = 'RingHKSV'
+export const platformName = 'Homebridge Ring HKSV'
 export const pluginName = 'homebridge-ring-hksv'
 
 function getAccessoryClass(
