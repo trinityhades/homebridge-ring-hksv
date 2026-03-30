@@ -9,6 +9,7 @@ yarn.lock
 .hoobs
 .turbo
 .gitattributes
+*.tgz
 
 # GitShift personal account configuration
 **/github-accounts.json

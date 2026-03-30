@@ -6,8 +6,9 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "build": "rm -rf lib && tsc && cp -r ./homebridge-ui/public ./lib/homebridge-ui/public/",
+    "build": "node -e \"require('fs').rmSync('lib', { recursive: true, force: true })\" && tsc && node -e \"require('fs').cpSync('./homebridge-ui/public', './lib/homebridge-ui/public', { recursive: true })\"",
     "lint": "eslint .",
+    "prepack": "npm run build",
     "dev": "concurrently -c yellow,blue --kill-others \"npm:dev:build\" \"npm:dev:run\" ",
     "dev:build": "tsc --watch --preserveWatchOutput",
     "dev:run": "RING_DEBUG=true node --watch ./node_modules/.bin/homebridge -U ./.homebridge -P ./node_modules"
