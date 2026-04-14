@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 14.3.4
+
+### Patch Changes
+
+- Fix Homebridge platform discovery by using the current platform registration API and explicit package entry metadata. This addresses installs where the plugin appeared in Homebridge UI but Homebridge could not resolve the `Homebridge Ring HKSV` platform during boot.
+
 ### Minor Changes
 
 - Add `homeKitAccessoryTag` to append a custom tag to Ring accessory names and generated HomeKit identities. This helps expose the same physical camera/accessory as a distinct HomeKit device for debugging or multi-home testing.
