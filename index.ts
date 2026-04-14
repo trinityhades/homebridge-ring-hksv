@@ -1,7 +1,8 @@
-import { platformName, pluginName, RingPlatform } from './ring-platform.ts'
+import type { API } from 'homebridge'
+import { platformName, RingPlatform } from './ring-platform.ts'
 import { setHap } from './hap.ts'
 
-export default function (homebridge: any) {
-  setHap(homebridge.hap)
-  homebridge.registerPlatform(pluginName, platformName, RingPlatform, true)
+export default function (api: API) {
+  setHap(api.hap)
+  api.registerPlatform(platformName, RingPlatform)
 }

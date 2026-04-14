@@ -4,7 +4,8 @@
   "version": "14.3.3",
   "description": "Homebridge plugin for Ring devices with HomeKit Secure Video support",
   "type": "module",
-  "main": "lib/index.js",
+  "main": "./lib/index.js",
+  "exports": "./lib/index.js",
   "scripts": {
     "build": "node -e \"require('fs').rmSync('lib', { recursive: true, force: true })\" && tsc && node -e \"require('fs').cpSync('./homebridge-ui/public', './lib/homebridge-ui/public', { recursive: true })\"",
     "lint": "eslint .",
@@ -32,6 +33,10 @@
   "engines": {
     "node": "^20 || ^22 || ^24",
     "homebridge": ">=1.4.0 || ^2.0.0-beta.0"
+  },
+  "homebridge": {
+    "pluginAlias": "Homebridge Ring HKSV",
+    "pluginType": "platform"
   },
   "author": "trinityhades",
   "license": "MIT",
