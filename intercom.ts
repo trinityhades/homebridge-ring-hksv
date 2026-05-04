@@ -1,10 +1,85 @@
 import type { RingIntercom } from 'ring-client-api'
+import { RingCamera } from 'ring-client-api'
 import { hap } from './hap.ts'
 import type { RingPlatformConfig } from './config.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { BaseDataAccessory } from './base-data-accessory.ts'
 import { logError, logInfo } from 'ring-client-api/util'
 import { map, throttleTime } from 'rxjs/operators'
+import { Subject } from 'rxjs'
+import { CameraSource } from './camera-source.ts'
+
+/**
+ * Creates a RingCamera-compatible proxy for a Ring Intercom Video device.
+ * Ring Intercom Video is classified as RingIntercom by ring-client-api but has a
+ * real camera. We use Object.create(RingCamera.prototype) so that startLiveCall()
+ * and createStreamingConnection() are inherited and work with the intercom's
+ * restClient and device id (Ring's signalling server uses the same doorbot_id
+ * scheme for video intercoms as for cameras).
+ */
+function createIntercomVideoProxy(device: RingIntercom): RingCamera {
+  const proxy = Object.create(RingCamera.prototype) as RingCamera
+
+  // RingCamera defines several properties (e.g. `name`, `id`) as getter-only on its
+  // prototype. Object.assign would try to set them via the prototype setter and throw.
+  // Object.defineProperty defines own properties directly on the proxy instance,
+  // shadowing the prototype getters without triggering them.
+  const define = (key: string, value: unknown) =>
+    Object.defineProperty(proxy, key, {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    })
+
+  define('id', device.id)
+  define('name', device.name)
+  define('deviceType', device.deviceType)
+  define('data', {
+    kind: device.deviceType,
+    device_id: String(device.id),
+    settings: {
+      live_view_disabled: false,
+      motion_detection_enabled: true,
+    },
+    metadata: {},
+  })
+  // restClient is technically private in TypeScript but public in compiled JS
+  define('restClient', (device as any).restClient)
+  define('isRingEdgeEnabled', false)
+  define('hasBattery', device.batteryLevel !== null)
+  define('isOffline', device.isOffline)
+  define('snapshotsAreBlocked', false)
+  define('hasSnapshotWithinLifetime', false)
+  define('snapshotLifeTime', 10000)
+  define('canTakeSnapshotWhileRecording', false)
+  define('latestNotificationSnapshotUuid', undefined)
+  define('onNewNotification', new Subject<never>())
+  define('onMotionDetected', new Subject<boolean>())
+  define('onDoorbellPressed', device.onDing)
+  define('onBatteryLevel', device.onBatteryLevel)
+  define('onInHomeDoorbellStatus', new Subject<boolean | undefined>())
+  define('hasLowBattery', false)
+  define('isCharging', false)
+  define('isDoorbot', true)
+  define('hasLight', false)
+  define('hasSiren', false)
+  define('hasInHomeDoorbell', false)
+  define('model', 'Ring Intercom Video')
+  // Override getSnapshot: intercom uses the same doorbots snapshot endpoint as cameras
+  define('getSnapshot', async () => {
+    try {
+      return await (device as any).restClient.request({
+        url: (device as any).doorbotUrl('snapshot'),
+        responseType: 'buffer',
+      })
+    } catch {
+      throw new Error(`Snapshot not available for ${device.name}`)
+    }
+  })
+
+  return proxy
+}
 
 export class Intercom extends BaseDataAccessory<RingIntercom> {
   private unlocking = false
@@ -26,7 +101,30 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
     this.config = config
 
     const { Characteristic, Service } = hap,
-      lockService = this.getService(Service.LockMechanism),
+      isIntercomVideo = device.deviceType === 'intercom_handset_video'
+
+    // Set up camera streaming for Ring Intercom Video before other services
+    if (isIntercomVideo) {
+      const cameraProxy = createIntercomVideoProxy(device)
+      const cameraSource = new CameraSource(cameraProxy, config)
+      accessory.configureController(cameraSource.controller)
+
+      this.registerCharacteristic({
+        characteristicType: Characteristic.Mute,
+        serviceType: Service.Microphone,
+        getValue: () => false,
+      })
+
+      this.registerCharacteristic({
+        characteristicType: Characteristic.Mute,
+        serviceType: Service.Speaker,
+        getValue: () => false,
+      })
+
+      logInfo(`Camera streaming enabled for Ring Intercom Video: ${device.name}`)
+    }
+
+    const lockService = this.getService(Service.LockMechanism),
       { LockCurrentState, LockTargetState, ProgrammableSwitchEvent } =
         Characteristic,
       programableSwitchService = this.getService(
@@ -144,7 +242,8 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
     this.registerCharacteristic({
       characteristicType: Characteristic.Model,
       serviceType: Service.AccessoryInformation,
-      getValue: () => 'Intercom Handset Audio',
+      getValue: () =>
+        isIntercomVideo ? 'Ring Intercom Video' : 'Ring Intercom',
     })
     this.registerCharacteristic({
       characteristicType: Characteristic.SerialNumber,
