@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Patch Changes
+
+- Prevent lock accessories from reporting invalid `LockTargetState` values when Ring reports a jammed or unknown current state. This removes repeated Homebridge warnings while preserving the correct current lock state in HomeKit.
+
 ## 14.3.4
 
 ### Patch Changes

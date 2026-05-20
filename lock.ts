@@ -83,6 +83,22 @@ export class Lock extends BaseDeviceAccessory {
   }
 
   getTargetState(data: RingDeviceData) {
-    return this.targetState || getCurrentState(data)
+    if (this.targetState !== undefined) {
+      return this.targetState
+    }
+
+    const {
+      Characteristic: { LockCurrentState, LockTargetState },
+    } = hap
+    const currentState = getCurrentState(data)
+
+    if (
+      currentState === LockCurrentState.JAMMED ||
+      currentState === LockCurrentState.UNKNOWN
+    ) {
+      return LockTargetState.SECURED
+    }
+
+    return currentState
   }
 }
