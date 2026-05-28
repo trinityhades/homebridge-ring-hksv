@@ -516,26 +516,14 @@ export class CameraSource
         newSnapshot = await this.ringCamera.getSnapshot({ uuid: imageUuid })
       this.cachedSnapshot = newSnapshot
 
-      if (previousSnapshot !== newSnapshot) {
-        // Keep the snapshots in cache 2 minutes longer than their lifetime
-        // This allows users on LTE with wired camera to get snapshots each 60 second pull even though the cached snapshot is out of date
-        setTimeout(
-          () => {
-            if (this.cachedSnapshot === newSnapshot) {
-              this.cachedSnapshot = undefined
-            }
-          },
-          this.ringCamera.snapshotLifeTime + 2 * 60 * 1000,
-        )
-      }
-
       logDebug(
         `Snapshot cached for ${this.ringCamera.name}${
           imageUuid ? ' by uuid' : ''
         } (${getDurationSeconds(start)}s)`,
       )
     } catch (e: any) {
-      this.cachedSnapshot = undefined
+      // Keep the last successful snapshot so HomeKit shows the cached image
+      // instead of "No Response" when the camera is temporarily unavailable.
       logDebug(
         `Failed to cache snapshot for ${
           this.ringCamera.name
@@ -547,7 +535,7 @@ export class CameraSource
       )
 
       // log additioanl snapshot error message if one is present
-      if (e.message.includes('Snapshot')) {
+      if (e.message && e.message.includes('Snapshot')) {
         logDebug(e.message)
       }
     }

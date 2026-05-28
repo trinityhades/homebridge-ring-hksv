@@ -51,7 +51,7 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
   define('isOffline', device.isOffline)
   define('snapshotsAreBlocked', false)
   define('hasSnapshotWithinLifetime', false)
-  define('snapshotLifeTime', 10000)
+  define('snapshotLifeTime', 55000) // camera stays active ~1 min after a ring
   define('canTakeSnapshotWhileRecording', false)
   define('latestNotificationSnapshotUuid', undefined)
   define('onNewNotification', new Subject<never>())
@@ -66,13 +66,20 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
   define('hasSiren', false)
   define('hasInHomeDoorbell', false)
   define('model', 'Ring Intercom Video')
-  // Override getSnapshot: intercom uses the same doorbots snapshot endpoint as cameras
-  define('getSnapshot', async () => {
+  // Override getSnapshot: intercom uses the same doorbots snapshot endpoint as cameras.
+  // After a successful fetch, mark hasSnapshotWithinLifetime=true so CameraSource
+  // doesn't fire a redundant reload on every HomeKit snapshot request.
+  define('getSnapshot', async (_options?: { uuid?: string }) => {
     try {
-      return await (device as any).restClient.request({
+      const snapshot = await (device as any).restClient.request({
         url: (device as any).doorbotUrl('snapshot'),
         responseType: 'buffer',
       })
+      proxy.hasSnapshotWithinLifetime = true
+      setTimeout(() => {
+        proxy.hasSnapshotWithinLifetime = false
+      }, proxy.snapshotLifeTime)
+      return snapshot
     } catch {
       throw new Error(`Snapshot not available for ${device.name}`)
     }
@@ -84,6 +91,7 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
 export class Intercom extends BaseDataAccessory<RingIntercom> {
   private unlocking = false
   private unlockTimeout?: ReturnType<typeof setTimeout>
+  private autoOpen = false
 
   public readonly device
   public readonly accessory
@@ -196,7 +204,33 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
         }
       },
     })
-    lockService.setPrimaryService(true)
+    // For audio-only intercom the lock is the main function; for video intercom
+    // the camera controller owns the primary-service role so HomeKit routes
+    // doorbell events (and HomePod chimes) correctly.
+    if (!isIntercomVideo) {
+      lockService.setPrimaryService(true)
+    }
+
+    // Auto-Open Switch — when on, automatically unlocks the door on every ring
+    this.registerCharacteristic({
+      characteristicType: Characteristic.On,
+      serviceType: Service.Switch,
+      serviceSubType: 'AutoOpen',
+      name: device.name + ' Auto Open',
+      getValue: () => this.autoOpen,
+      setValue: (value: boolean) => {
+        this.autoOpen = value
+        logInfo(`${device.name} auto-open ${value ? 'enabled' : 'disabled'}`)
+      },
+    })
+
+    device.onDing.pipe(throttleTime(15000)).subscribe(() => {
+      if (this.autoOpen) {
+        logInfo(`Auto-opening ${device.name}`)
+        device.unlock().catch(logError)
+        markAsUnlocked()
+      }
+    })
 
     // Doorbell Service
     this.registerObservableCharacteristic({
