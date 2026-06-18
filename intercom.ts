@@ -20,61 +20,68 @@ import { CameraSource } from './camera-source.ts'
 function createIntercomVideoProxy(device: RingIntercom): RingCamera {
   const proxy = Object.create(RingCamera.prototype) as RingCamera
 
-  // RingCamera defines several properties (e.g. `name`, `id`) as getter-only on its
-  // prototype. Object.assign would try to set them via the prototype setter and throw.
-  // Object.defineProperty defines own properties directly on the proxy instance,
-  // shadowing the prototype getters without triggering them.
-  const define = (key: string, value: unknown) =>
+  const defineValue = (key: string, value: unknown) =>
     Object.defineProperty(proxy, key, {
       value,
       writable: true,
       configurable: true,
       enumerable: true,
     })
+  const defineGetter = (key: string, get: () => unknown) =>
+    Object.defineProperty(proxy, key, {
+      get,
+      configurable: true,
+      enumerable: true,
+    })
 
-  define('id', device.id)
-  define('name', device.name)
-  define('deviceType', device.deviceType)
-  define('data', {
+  defineValue('id', device.id)
+  defineGetter('name', () => device.name)
+  defineGetter('deviceType', () => device.deviceType)
+  defineGetter('data', () => ({
+    ...device.data,
     kind: device.deviceType,
     device_id: String(device.id),
+    metadata: (device.data as any).metadata ?? {},
     settings: {
       live_view_disabled: false,
       motion_detection_enabled: true,
+      ...(device.data as any).settings,
     },
-    metadata: {},
-  })
+  }))
   // restClient is technically private in TypeScript but public in compiled JS
-  define('restClient', (device as any).restClient)
-  define('isRingEdgeEnabled', false)
-  define('hasBattery', device.batteryLevel !== null)
-  define('isOffline', device.isOffline)
-  define('snapshotsAreBlocked', false)
-  define('hasSnapshotWithinLifetime', false)
-  define('snapshotLifeTime', 55000) // camera stays active ~1 min after a ring
-  define('canTakeSnapshotWhileRecording', false)
-  define('latestNotificationSnapshotUuid', undefined)
-  define('onNewNotification', new Subject<never>())
-  define('onMotionDetected', new Subject<boolean>())
-  define('onDoorbellPressed', device.onDing)
-  define('onBatteryLevel', device.onBatteryLevel)
-  define('onInHomeDoorbellStatus', new Subject<boolean | undefined>())
-  define('hasLowBattery', false)
-  define('isCharging', false)
-  define('isDoorbot', true)
-  define('hasLight', false)
-  define('hasSiren', false)
-  define('hasInHomeDoorbell', false)
-  define('model', 'Ring Intercom Video')
+  defineValue('restClient', (device as any).restClient)
+  defineGetter('isRingEdgeEnabled', () => false)
+  defineGetter('hasBattery', () => device.batteryLevel !== null)
+  defineGetter('isOffline', () => device.isOffline)
+  defineGetter('snapshotsAreBlocked', () => false)
+  defineGetter('canTakeSnapshotWhileRecording', () => false)
+  defineGetter('latestNotificationSnapshotUuid', () => undefined)
+  defineValue('onNewNotification', new Subject<never>())
+  defineValue('onMotionDetected', new Subject<boolean>())
+  defineValue('onDoorbellPressed', device.onDing)
+  defineValue('onBatteryLevel', device.onBatteryLevel)
+  defineValue('onInHomeDoorbellStatus', new Subject<boolean | undefined>())
+  defineGetter(
+    'hasLowBattery',
+    () => Boolean((device.data as any).alerts?.battery === 'low'),
+  )
+  defineGetter('isCharging', () => false)
+  defineValue('isDoorbot', true)
+  defineValue('hasLight', false)
+  defineValue('hasSiren', false)
+  defineValue('hasInHomeDoorbell', false)
+  defineValue('model', 'Ring Intercom Video')
+  defineValue('snapshotLifeTime', 55000) // camera stays active ~1 min after a ring
   // Pre-warm support: start the WebRTC call the moment a ding is detected so
   // the camera is already streaming when HKSV requests the recording.
   let preWarmedCall: Promise<any> | null = null
   let preWarmCleanup: ReturnType<typeof setTimeout> | null = null
+  let lastSnapshotAt = 0
 
   const realStartLiveCall = () =>
     (RingCamera.prototype.startLiveCall as any).call(proxy)
 
-  define('startLiveCall', () => {
+  defineValue('startLiveCall', () => {
     if (preWarmedCall) {
       const call = preWarmedCall
       preWarmedCall = null
@@ -88,7 +95,7 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
     return realStartLiveCall()
   })
 
-  define('preWarmCamera', () => {
+  defineValue('preWarmCamera', () => {
     if (preWarmedCall) return
     logInfo(`${device.name}: pre-warming camera connection`)
     preWarmedCall = realStartLiveCall()
@@ -98,26 +105,29 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
         try {
           const session = await preWarmedCall
           session.stop()
-        } catch {}
-        preWarmedCall = null
-        preWarmCleanup = null
+        } catch (e) {
+          logError(`Failed to stop pre-warmed camera session for ${device.name}`)
+          logError(e)
+        } finally {
+          preWarmedCall = null
+          preWarmCleanup = null
+        }
       }
     }, 20000)
   })
 
   // Override getSnapshot: intercom uses the same doorbots snapshot endpoint as cameras.
-  // After a successful fetch, mark hasSnapshotWithinLifetime=true so CameraSource
-  // doesn't fire a redundant reload on every HomeKit snapshot request.
-  define('getSnapshot', async (_options?: { uuid?: string }) => {
+  defineGetter(
+    'hasSnapshotWithinLifetime',
+    () => Date.now() - lastSnapshotAt < proxy.snapshotLifeTime,
+  )
+  defineValue('getSnapshot', async (_options?: { uuid?: string }) => {
     try {
       const snapshot = await (device as any).restClient.request({
         url: (device as any).doorbotUrl('snapshot'),
         responseType: 'buffer',
       })
-      ;(proxy as any).hasSnapshotWithinLifetime = true
-      setTimeout(() => {
-        ;(proxy as any).hasSnapshotWithinLifetime = false
-      }, proxy.snapshotLifeTime)
+      lastSnapshotAt = Date.now()
       return snapshot
     } catch {
       throw new Error(`Snapshot not available for ${device.name}`)
@@ -130,7 +140,6 @@ function createIntercomVideoProxy(device: RingIntercom): RingCamera {
 export class Intercom extends BaseDataAccessory<RingIntercom> {
   private unlocking = false
   private unlockTimeout?: ReturnType<typeof setTimeout>
-  private autoOpen = false
 
   public readonly device
   public readonly accessory
@@ -182,6 +191,10 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
       // fallback — it reflects the current ring in real time (unlike the history
       // endpoint which can lag by ~60 seconds).
       onDingDetected = (() => {
+        if (!isIntercomVideo) {
+          return device.onDing.pipe(share())
+        }
+
         let lastDingId: string | undefined
 
         const polled = interval(3000).pipe(
@@ -210,11 +223,11 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
         )
 
         // share() makes this hot: one polling interval, one lastDingId,
-        // emission fans out to all subscribers (doorbell service + auto-open)
-        return merge(device.onDing, polled).pipe(share())
+        // emission fans out to all subscribers that rely on ding events.
+        return merge(device.onDing, polled).pipe(throttleTime(3000), share())
       })(),
       onDoorbellPressed = onDingDetected.pipe(
-        throttleTime(3000),
+        throttleTime(15000),
         map(() => {
           logInfo(`Doorbell pressed on ${device.name} — sending HomeKit event`)
           return ProgrammableSwitchEvent.SINGLE_PRESS
@@ -288,32 +301,6 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
     if (!isIntercomVideo) {
       lockService.setPrimaryService(true)
     }
-
-    // Auto-Open Switch — when on, automatically unlocks the door on every ring
-    this.registerCharacteristic({
-      characteristicType: Characteristic.On,
-      serviceType: Service.Switch,
-      serviceSubType: 'AutoOpen',
-      name: device.name + ' Auto Open',
-      getValue: () => this.autoOpen,
-      setValue: (value: boolean) => {
-        this.autoOpen = value
-        logInfo(`${device.name} auto-open ${value ? 'enabled' : 'disabled'}`)
-      },
-    })
-
-    onDingDetected.pipe(throttleTime(15000)).subscribe(() => {
-      if (this.autoOpen) {
-        logInfo(`Auto-opening ${device.name}`)
-        device
-          .unlock()
-          .then((response) =>
-            logInfo(`Auto-open unlock response: ${JSON.stringify(response)}`),
-          )
-          .catch(logError)
-        markAsUnlocked()
-      }
-    })
 
     // Pre-warm the camera WebRTC connection on every ding so HKSV recording
     // gets live video instead of black frames.
