@@ -333,7 +333,7 @@
     {
       "type": "fieldset",
       "title": "Optional Configuration",
-      "expandable": true,
+      "expandable": false,
       "items": [
         "alarmOnEntryDelay",
         "enableHksv",
