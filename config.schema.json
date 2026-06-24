@@ -334,8 +334,8 @@
     },
     {
       "type": "fieldset",
-      "title": "Optional Configuration",
-      "expandable": true,
+      "title": "Optional Configurations:",
+      "expandable": false,
       "items": [
         {
           "type": "fieldset",

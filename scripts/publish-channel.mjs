@@ -3,10 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const [, , rawChannel, ...rawArgs] = process.argv
-const validChannels = new Set(['dev', 'nightly'])
+const validChannels = new Set(['beta', 'nightly'])
 
 if (!validChannels.has(rawChannel)) {
-  console.error('Usage: node scripts/publish-channel.mjs <dev|nightly> [--dry-run]')
+  console.error('Usage: node scripts/publish-channel.mjs <beta|nightly> [--dry-run]')
   process.exit(1)
 }
 
@@ -59,15 +59,15 @@ function getTimestampSuffix(date = new Date()) {
   return parts.join('')
 }
 
-function getNextDevVersion(version) {
+function getNextBetaVersion(version) {
   const parsed = parseVersion(version)
 
-  if (parsed.prerelease.startsWith('dev.')) {
+  if (parsed.prerelease.startsWith('beta.')) {
     const currentNumber = Number(parsed.prerelease.split('.')[1] ?? '0')
-    return formatVersion(parsed, `dev.${currentNumber + 1}`)
+    return formatVersion(parsed, `beta.${currentNumber + 1}`)
   }
 
-  return formatVersion(getNextStableBase(version), 'dev.0')
+  return formatVersion(getNextStableBase(version), 'beta.0')
 }
 
 function getNextNightlyVersion(version) {
@@ -78,8 +78,8 @@ function getNextNightlyVersion(version) {
 }
 
 const nextVersion =
-  rawChannel === 'dev'
-    ? getNextDevVersion(currentVersion)
+  rawChannel === 'beta'
+    ? getNextBetaVersion(currentVersion)
     : getNextNightlyVersion(currentVersion)
 
 console.log(`${name}: ${currentVersion} -> ${nextVersion}`)
