@@ -52,12 +52,30 @@ If Homebridge is installed globally:
 npm i -g --unsafe-perm homebridge-ring-hksv
 ```
 
+If you want an opt-in prerelease channel from npm, install one of the dist-tags instead:
+
+```bash
+npm i -g --unsafe-perm homebridge-ring-hksv@dev
+npm i -g --unsafe-perm homebridge-ring-hksv@nightly
+```
+
+The `latest` tag remains the stable release line. `dev` is intended for hand-picked prerelease builds, and `nightly` is intended for newer automated or near-mainline snapshots.
+
 If running from source:
 
 ```bash
 npm install
 npm run build
 ```
+
+To publish an opt-in prerelease channel to npm:
+
+```bash
+npm run publish:dev
+npm run publish:nightly
+```
+
+Both commands create a prerelease semver version and publish it under the matching npm dist-tag, so users can install `homebridge-ring-hksv@dev` or `homebridge-ring-hksv@nightly` without affecting `latest`. Add `-- --dry-run` to preview the computed version without changing files or publishing.
 
 ## Basic Configuration
 

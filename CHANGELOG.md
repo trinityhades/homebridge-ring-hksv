@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 14.3.9
+
+### Patch Changes
+
+- Keep the optional configuration section in the Homebridge UI always visible so HKSV tuning and advanced options are easier to discover.
+
+## 14.3.8
+
+### Minor Changes
+
+- Add `hksvPerformanceMode` with a Raspberry Pi oriented `rpi` profile, plus `hksvMaxConcurrentRecordings` and `hksvMaxQueuedBytes` safeguards for lower-power systems.
+- Expand `cameraVideoCodec` to support `auto`, `copy`, and `h264_v4l2m2m`, allowing HKSV recordings to remux compatible Ring H.264 streams or use hardware acceleration where available.
+- Rework the HKSV recording pipeline to use fragmented MP4 parsing and a shared recording work queue to reduce CPU and memory pressure during concurrent recordings.
+
+### Patch Changes
+
+- Update package metadata and dependencies for newer Homebridge and Node.js releases, including `homebridge-config-ui-x`, Node 26 engine support, and package manager `allowScripts` entries.
+- Remove the accidentally committed packaged tarball from the repository.
+
+## 14.3.7
+
+### Patch Changes
+
+- Correct the published package version metadata for the `14.3.7` npm release.
+
+## 14.3.6
+
+### Minor Changes
+
+- Add HKSV recording quality controls with `hksvVideoBitrateKbps`, `hksvVideoMaxBitrateKbps`, `hksvVideoBufferSizeKbps`, `hksvVideoCrf`, `hksvVideoPreset`, and `hksvVideoKeyframeInterval`.
+
+### Patch Changes
+
+- Honor HKSV recording duration limits more reliably and improve cleanup of recording sessions and timers.
+- Expand the README and config schema guidance for HKSV bitrate tuning and hardware-accelerated recording paths.
+
+## 14.3.5
+
 ### Patch Changes
 
 - Prevent lock accessories from reporting invalid `LockTargetState` values when Ring reports a jammed or unknown current state. This removes repeated Homebridge warnings while preserving the correct current lock state in HomeKit.

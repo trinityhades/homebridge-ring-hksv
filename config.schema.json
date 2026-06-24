@@ -328,109 +328,139 @@
     {
       "type": "flex",
       "flex-flow": "row wrap",
-      "items": ["refreshToken"]
+      "items": [
+        "refreshToken"
+      ]
     },
     {
       "type": "fieldset",
       "title": "Optional Configuration",
-      "expandable": false,
+      "expandable": true,
       "items": [
-        "alarmOnEntryDelay",
-        "enableHksv",
-        "disableHksvOnBattery",
-        "hksvPrebufferLengthMs",
-        "hksvFragmentLengthMs",
-        "hksvMaxRecordingSeconds",
-        "hksvPerformanceMode",
-        "hksvMaxQueuedBytes",
-        "hksvMaxConcurrentRecordings",
-        "hksvVideoBitrateKbps",
-        "hksvVideoMaxBitrateKbps",
-        "hksvVideoBufferSizeKbps",
-        "hksvVideoCrf",
-        "hksvVideoKeyframeInterval",
-        "hksvVideoPreset",
-        "homeKitAccessoryTag",
-        "cameraVideoCodec",
-        "hideLightGroups",
-        "hideDoorbellSwitch",
-        "hideCameraLight",
-        "hideCameraMotionSensor",
-        "hideCameraSirenSwitch",
-        "hideInHomeDoorbellSwitch",
-        "hideAlarmSirenSwitch",
-        "externalCameraIdSalt",
-        "showPanicButtons",
-        "nightModeBypassFor",
-        "avoidSnapshotBatteryDrain",
-        "beamDurationSeconds",
-        "debug",
-        "disableLogs",
-        "cameraStatusPollingSeconds",
-        "locationModePollingSeconds",
         {
-          "key": "hideDeviceIds",
-          "add": "Add Another Device ID",
-          "type": "array",
+          "type": "fieldset",
+          "title": "HomeKit Secure Video",
+          "expandable": true,
+          "items": [
+            "alarmOnEntryDelay",
+            "enableHksv",
+            "disableHksvOnBattery",
+            "hksvVideoPreset",
+            "cameraVideoCodec",
+            "hksvPrebufferLengthMs",
+            "hksvFragmentLengthMs",
+            "hksvMaxRecordingSeconds",
+            "hksvPerformanceMode",
+            "hksvMaxQueuedBytes",
+            "hksvMaxConcurrentRecordings",
+            "hksvVideoBitrateKbps",
+            "hksvVideoMaxBitrateKbps",
+            "hksvVideoBufferSizeKbps",
+            "hksvVideoCrf",
+            "hksvVideoKeyframeInterval"
+          ]
+        },
+        {
+          "type": "fieldset",
+          "title": "Accessory Visibility",
+          "expandable": true,
+          "items": [
+            "homeKitAccessoryTag",
+            "hideLightGroups",
+            "hideDoorbellSwitch",
+            "hideCameraLight",
+            "hideCameraMotionSensor",
+            "hideCameraSirenSwitch",
+            "hideInHomeDoorbellSwitch",
+            "hideAlarmSirenSwitch",
+            "showPanicButtons",
+            "externalCameraIdSalt"
+          ]
+        },
+        {
+          "type": "fieldset",
+          "title": "Device Filtering",
+          "expandable": true,
           "items": [
             {
-              "type": "div",
-              "displayFlex": true,
-              "flex-direction": "row",
+              "key": "hideDeviceIds",
+              "add": "Add Another Device ID",
+              "type": "array",
               "items": [
                 {
-                  "key": "hideDeviceIds[]",
-                  "placeholder": "Device ID"
+                  "type": "div",
+                  "displayFlex": true,
+                  "flex-direction": "row",
+                  "items": [
+                    {
+                      "key": "hideDeviceIds[]",
+                      "placeholder": "Device ID"
+                    }
+                  ]
                 }
               ]
+            },
+            {
+              "type": "help",
+              "helpvalue": "<p>If you would like to hide individual devices in HomeKit, enter the desired device IDs above.  The ID for each device is logged every time homebridge starts.</p>"
+            },
+            {
+              "key": "locationIds",
+              "type": "array",
+              "items": [
+                {
+                  "type": "div",
+                  "displayFlex": true,
+                  "flex-direction": "row",
+                  "items": [
+                    {
+                      "key": "locationIds[]",
+                      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or xxxxx-xxxxx-x"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "help",
+              "helpvalue": "<p>If you have multiple locations configured in Ring but only want some of them in HomeKit, enter the desired location IDs above.  The ID for each location is logged every time homebridge starts.</p>"
+            },
+            {
+              "key": "onlyDeviceTypes",
+              "type": "array",
+              "items": [
+                {
+                  "type": "div",
+                  "displayFlex": true,
+                  "flex-direction": "row",
+                  "items": [
+                    {
+                      "key": "onlyDeviceTypes[]",
+                      "placeholder": "Device Type"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "help",
+              "helpvalue": "<p>If you only want to display certain device types, you can specify a those device types here.  All other device types will be removed from HomeKit.  Example: security-panel to show your alarm, hp_cam_v1 to show floodlight cams.</p>"
             }
           ]
         },
         {
-          "type": "help",
-          "helpvalue": "<p>If you would like to hide individual devices in HomeKit, enter the desired device IDs above.  The ID for each device is logged every time homebridge starts.</p>"
-        },
-        {
-          "key": "locationIds",
-          "type": "array",
+          "type": "fieldset",
+          "title": "Polling & Diagnostics",
+          "expandable": true,
           "items": [
-            {
-              "type": "div",
-              "displayFlex": true,
-              "flex-direction": "row",
-              "items": [
-                {
-                  "key": "locationIds[]",
-                  "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or xxxxx-xxxxx-x"
-                }
-              ]
-            }
+            "avoidSnapshotBatteryDrain",
+            "beamDurationSeconds",
+            "debug",
+            "disableLogs",
+            "cameraStatusPollingSeconds",
+            "locationModePollingSeconds",
+            "nightModeBypassFor"
           ]
-        },
-        {
-          "type": "help",
-          "helpvalue": "<p>If you have multiple locations configured in Ring but only want some of them in HomeKit, enter the desired location IDs above.  The ID for each location is logged every time homebridge starts.</p>"
-        },
-        {
-          "key": "onlyDeviceTypes",
-          "type": "array",
-          "items": [
-            {
-              "type": "div",
-              "displayFlex": true,
-              "flex-direction": "row",
-              "items": [
-                {
-                  "key": "onlyDeviceTypes[]",
-                  "placeholder": "Device Type"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "help",
-          "helpvalue": "<p>If you only want to display certain device types, you can specify a those device types here.  All other device types will be removed from HomeKit.  Example: security-panel to show your alarm, hp_cam_v1 to show floodlight cams.</p>"
         }
       ]
     }
