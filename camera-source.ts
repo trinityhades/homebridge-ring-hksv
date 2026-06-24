@@ -42,6 +42,17 @@ import {
 } from 'werift'
 import type { StreamingSession } from 'ring-client-api/streaming/streaming-session'
 import path from 'node:path'
+import { FragmentedMp4Parser } from './fragmented-mp4-parser.ts'
+import {
+  getFfmpegCapabilities,
+  type FfmpegCapabilities,
+} from './ffmpeg-capabilities.ts'
+import {
+  getHksvPerformanceMode,
+  getHksvRecordingResolutions,
+  selectHksvVideoCodec,
+} from './hksv-options.ts'
+import { hksvRecordingQueue } from './hksv-work-queue.ts'
 
 const __dirname = new URL('.', import.meta.url).pathname,
   mediaDirectory = path.join(__dirname.replace(/\/lib\/?$/, ''), 'media'),
@@ -76,38 +87,6 @@ function getIntegerConfigValue(
   }
 
   return Math.min(Math.max(Math.round(value!), min), max)
-}
-
-function* parseMp4Boxes(data: Buffer): Generator<{ type: string; box: Buffer }> {
-  let offset = 0
-
-  while (offset + 8 <= data.length) {
-    const shortLength = data.readUInt32BE(offset)
-    let boxLength = shortLength
-    let headerLength = 8
-
-    if (shortLength === 1) {
-      if (offset + 16 > data.length) {
-        break
-      }
-
-      boxLength = Number(data.readBigUInt64BE(offset + 8))
-      headerLength = 16
-    } else if (shortLength === 0) {
-      break
-    }
-
-    if (boxLength < headerLength || offset + boxLength > data.length) {
-      break
-    }
-
-    const box = data.subarray(offset, offset + boxLength),
-      type = box.subarray(4, 8).toString('ascii')
-
-    yield { type, box }
-
-    offset += boxLength
-  }
 }
 
 class StreamingSessionWrapper {
@@ -391,6 +370,14 @@ export class CameraSource
   constructor(ringCamera: RingCamera, config: RingPlatformConfig) {
     this.ringCamera = ringCamera
     this.config = config
+    hksvRecordingQueue.setConcurrency(
+      getIntegerConfigValue(
+        config.hksvMaxConcurrentRecordings,
+        getHksvPerformanceMode(config) === 'rpi' ? 1 : 2,
+        1,
+        4,
+      ),
+    )
 
     const enableHksv =
       config.enableHksv && !(config.disableHksvOnBattery && ringCamera.hasBattery)
@@ -468,12 +455,7 @@ export class CameraSource
                 H264Level.LEVEL4_0,
               ],
             },
-            resolutions: [
-              [1920, 1080, 30],
-              [1280, 720, 30],
-              [640, 480, 30],
-              [320, 240, 15],
-            ],
+            resolutions: getHksvRecordingResolutions(config),
           },
           audio: {
             codecs: {
@@ -497,15 +479,22 @@ export class CameraSource
     this.controller = new hap.CameraController(controllerOptions)
   }
 
-  private getHksvVideoArguments() {
+  private getHksvVideoArguments(capabilities?: FfmpegCapabilities) {
     const {
-        cameraVideoCodec = 'libx264',
+        cameraVideoCodec,
         hksvVideoCrf,
-        hksvVideoPreset = 'veryfast',
+        hksvVideoPreset = getHksvPerformanceMode(this.config) === 'rpi'
+          ? 'ultrafast'
+          : 'veryfast',
       } = this.config,
+      selectedCodec = selectHksvVideoCodec(
+        cameraVideoCodec,
+        capabilities,
+        this.config,
+      ),
       bitrateKbps = getIntegerConfigValue(
         this.config.hksvVideoBitrateKbps,
-        3000,
+        getHksvPerformanceMode(this.config) === 'rpi' ? 1000 : 3000,
         256,
         12000,
       ),
@@ -527,9 +516,11 @@ export class CameraSource
         5,
         240,
       ),
-      videoArguments = [
+      videoArguments = selectedCodec === 'copy'
+        ? ['-vcodec', 'copy']
+        : [
         '-vcodec',
-        cameraVideoCodec,
+        selectedCodec,
         '-b:v',
         `${bitrateKbps}k`,
         '-maxrate',
@@ -546,7 +537,11 @@ export class CameraSource
         `${keyframeInterval}`,
       ]
 
-    if (cameraVideoCodec === 'libx264') {
+    if (selectedCodec === 'copy') {
+      return videoArguments
+    }
+
+    if (selectedCodec === 'libx264') {
       videoArguments.push(
         '-preset',
         hksvVideoPreset,
@@ -815,24 +810,28 @@ export class CameraSource
 
     const packetQueue: RecordingPacket[] = []
     let waitForPacket: (() => void) | undefined,
-      pendingData = Buffer.alloc(0),
-      initBoxes: Buffer[] = [],
-      initSent = false,
-      fragmentBoxes: Buffer[] = [],
+      queuedBytes = 0,
       closed = false
 
     const fragmentLengthMs =
-      this.recordingConfiguration.mediaContainerConfiguration.fragmentLength
+        this.recordingConfiguration.mediaContainerConfiguration.fragmentLength,
+      parser = new FragmentedMp4Parser(),
+      maxQueuedBytes = getIntegerConfigValue(
+        this.config.hksvMaxQueuedBytes,
+        getHksvPerformanceMode(this.config) === 'rpi'
+          ? 6 * 1024 * 1024
+          : 16 * 1024 * 1024,
+        1024 * 1024,
+        64 * 1024 * 1024,
+      ),
+      start = Date.now()
 
-    const wake = () => {
-        waitForPacket?.()
-        waitForPacket = undefined
-      },
-      enqueuePacket = (packet: RecordingPacket) => {
-        packetQueue.push(packet)
-        wake()
-      },
-      closeSession = () => {
+    function wake() {
+      waitForPacket?.()
+      waitForPacket = undefined
+    }
+
+    const closeSession = () => {
         if (closed) {
           return
         }
@@ -840,6 +839,20 @@ export class CameraSource
         closed = true
         this.closedRecordingStreams.add(streamId)
         this.activeRecordingSessions.delete(streamId)
+        wake()
+      },
+      enqueuePacket = (packet: RecordingPacket) => {
+        queuedBytes += packet.data.length
+
+        if (queuedBytes > maxQueuedBytes) {
+          logInfo(
+            `HKSV recording queue limit reached for ${this.ringCamera.name} (streamId=${streamId}, queuedBytes=${queuedBytes}, maxQueuedBytes=${maxQueuedBytes})`,
+          )
+          closeSession()
+          return
+        }
+
+        packetQueue.push(packet)
         wake()
       }
 
@@ -849,8 +862,18 @@ export class CameraSource
     let liveCall: StreamingSession | undefined
     let keyFrameTimer: ReturnType<typeof setInterval> | undefined
     let maxRecordingTimer: ReturnType<typeof setTimeout> | undefined
+    let releaseQueueSlot: (() => void) | undefined
 
     try {
+      releaseQueueSlot = await hksvRecordingQueue.acquire()
+      const capabilities = await getFfmpegCapabilities(),
+        videoArguments = this.getHksvVideoArguments(capabilities),
+        selectedVideoCodec = String(videoArguments[1])
+
+      logInfo(
+        `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
+      )
+
       liveCall = await this.ringCamera.startLiveCall()
 
       liveCall.onCallEnded.pipe(take(1)).subscribe(() => {
@@ -874,7 +897,7 @@ export class CameraSource
       }
 
       await liveCall.startTranscoding({
-        video: this.getHksvVideoArguments(),
+        video: videoArguments,
         output: [
           '-movflags',
           'frag_keyframe+empty_moov+default_base_moof',
@@ -893,62 +916,18 @@ export class CameraSource
             return
           }
 
-          pendingData = Buffer.concat([pendingData, data])
-
-          let consumed = 0
-
-          for (const { type, box } of parseMp4Boxes(pendingData)) {
-            consumed += box.length
-
-            if (!initSent) {
-              initBoxes.push(box)
-
-              if (type === 'moov') {
-                enqueuePacket({
-                  data: Buffer.concat(initBoxes),
-                  isLast: false,
-                })
-                initBoxes = []
-                initSent = true
-              }
-
-              continue
-            }
-
-            if (type === 'styp') {
-              fragmentBoxes = [box]
-              continue
-            }
-
-            if (type === 'moof') {
-              fragmentBoxes = fragmentBoxes.length ? [...fragmentBoxes, box] : [box]
-              continue
-            }
-
-            if (!fragmentBoxes.length) {
-              continue
-            }
-
-            fragmentBoxes.push(box)
-
-            if (type === 'mdat') {
-              enqueuePacket({
-                data: Buffer.concat(fragmentBoxes),
-                isLast: false,
-              })
-              fragmentBoxes = []
-            }
-          }
-
-          if (consumed > 0) {
-            pendingData = pendingData.subarray(consumed)
+          for (const packet of parser.append(data)) {
+            enqueuePacket(packet)
           }
         },
       })
 
       liveCall.requestKeyFrame()
       keyFrameTimer = setInterval(() => {
-        if (closed || initSent) {
+        if (
+          closed ||
+          (selectedVideoCodec !== 'copy' && parser.hasInitializationSegment)
+        ) {
           if (keyFrameTimer) {
             clearInterval(keyFrameTimer)
             keyFrameTimer = undefined
@@ -957,11 +936,13 @@ export class CameraSource
         }
 
         liveCall?.requestKeyFrame()
-      }, 2000)
+      }, selectedVideoCodec === 'copy' ? Math.max(fragmentLengthMs, 1000) : 2000)
 
       while (!closed) {
         if (packetQueue.length) {
-          yield packetQueue.shift()!
+          const packet = packetQueue.shift()!
+          queuedBytes -= packet.data.length
+          yield packet
           continue
         }
 
@@ -975,6 +956,10 @@ export class CameraSource
       logError(e)
       closeSession()
     } finally {
+      logInfo(
+        `HKSV recording pipeline ended for ${this.ringCamera.name} (streamId=${streamId}, duration=${getDurationSeconds(start)}s, queuedBytes=${queuedBytes})`,
+      )
+
       this.recordingWaiters.delete(streamId)
       this.activeRecordingSessions.delete(streamId)
 
@@ -989,6 +974,8 @@ export class CameraSource
       if (liveCall) {
         liveCall.stop()
       }
+
+      releaseQueueSlot?.()
     }
   }
 
