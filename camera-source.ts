@@ -65,6 +65,19 @@ function getSessionConfig(srtpOptions: SrtpOptions) {
   }
 }
 
+function getIntegerConfigValue(
+  value: number | undefined,
+  defaultValue: number,
+  min: number,
+  max: number,
+) {
+  if (!Number.isFinite(value)) {
+    return defaultValue
+  }
+
+  return Math.min(Math.max(Math.round(value!), min), max)
+}
+
 function* parseMp4Boxes(data: Buffer): Generator<{ type: string; box: Buffer }> {
   let offset = 0
 
@@ -367,6 +380,7 @@ export class CameraSource
   private sessions: { [sessionKey: string]: StreamingSessionWrapper } = {}
   private cachedSnapshot?: Buffer
   private ringCamera
+  private config: RingPlatformConfig
 
   private recordingActive = false
   private recordingConfiguration?: CameraRecordingConfiguration
@@ -376,6 +390,7 @@ export class CameraSource
 
   constructor(ringCamera: RingCamera, config: RingPlatformConfig) {
     this.ringCamera = ringCamera
+    this.config = config
 
     const enableHksv =
       config.enableHksv && !(config.disableHksvOnBattery && ringCamera.hasBattery)
@@ -480,6 +495,78 @@ export class CameraSource
     }
 
     this.controller = new hap.CameraController(controllerOptions)
+  }
+
+  private getHksvVideoArguments() {
+    const {
+        cameraVideoCodec = 'libx264',
+        hksvVideoCrf,
+        hksvVideoPreset = 'veryfast',
+      } = this.config,
+      bitrateKbps = getIntegerConfigValue(
+        this.config.hksvVideoBitrateKbps,
+        3000,
+        256,
+        12000,
+      ),
+      maxBitrateKbps = getIntegerConfigValue(
+        this.config.hksvVideoMaxBitrateKbps,
+        bitrateKbps * 2,
+        bitrateKbps,
+        20000,
+      ),
+      bufferSizeKbps = getIntegerConfigValue(
+        this.config.hksvVideoBufferSizeKbps,
+        maxBitrateKbps * 2,
+        maxBitrateKbps,
+        40000,
+      ),
+      keyframeInterval = getIntegerConfigValue(
+        this.config.hksvVideoKeyframeInterval,
+        30,
+        5,
+        240,
+      ),
+      videoArguments = [
+        '-vcodec',
+        cameraVideoCodec,
+        '-b:v',
+        `${bitrateKbps}k`,
+        '-maxrate',
+        `${maxBitrateKbps}k`,
+        '-bufsize',
+        `${bufferSizeKbps}k`,
+        '-pix_fmt',
+        'yuv420p',
+        '-profile:v',
+        'baseline',
+        '-level:v',
+        '3.1',
+        '-g',
+        `${keyframeInterval}`,
+      ]
+
+    if (cameraVideoCodec === 'libx264') {
+      videoArguments.push(
+        '-preset',
+        hksvVideoPreset,
+        '-tune',
+        'zerolatency',
+        '-keyint_min',
+        `${keyframeInterval}`,
+        '-sc_threshold',
+        '0',
+      )
+
+      if (Number.isFinite(hksvVideoCrf)) {
+        videoArguments.push(
+          '-crf',
+          `${getIntegerConfigValue(hksvVideoCrf, 23, 18, 35)}`,
+        )
+      }
+    }
+
+    return videoArguments
   }
 
   private previousLoadSnapshotPromise?: Promise<any>
@@ -760,7 +847,8 @@ export class CameraSource
     this.activeRecordingSessions.set(streamId, closeSession)
 
     let liveCall: StreamingSession | undefined
-  let keyFrameTimer: ReturnType<typeof setInterval> | undefined
+    let keyFrameTimer: ReturnType<typeof setInterval> | undefined
+    let maxRecordingTimer: ReturnType<typeof setTimeout> | undefined
 
     try {
       liveCall = await this.ringCamera.startLiveCall()
@@ -769,27 +857,24 @@ export class CameraSource
         closeSession()
       })
 
+      const maxRecordingSeconds = getIntegerConfigValue(
+        this.config.hksvMaxRecordingSeconds,
+        0,
+        0,
+        300,
+      )
+
+      if (maxRecordingSeconds) {
+        maxRecordingTimer = setTimeout(() => {
+          logInfo(
+            `HKSV recording stream reached max duration for ${this.ringCamera.name} (streamId=${streamId}, maxSeconds=${maxRecordingSeconds})`,
+          )
+          closeSession()
+        }, maxRecordingSeconds * 1000)
+      }
+
       await liveCall.startTranscoding({
-        video: [
-          '-vcodec',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-tune',
-          'zerolatency',
-          '-pix_fmt',
-          'yuv420p',
-          '-profile:v',
-          'baseline',
-          '-level:v',
-          '3.1',
-          '-g',
-          '30',
-          '-keyint_min',
-          '30',
-          '-sc_threshold',
-          '0',
-        ],
+        video: this.getHksvVideoArguments(),
         output: [
           '-movflags',
           'frag_keyframe+empty_moov+default_base_moof',
@@ -895,6 +980,10 @@ export class CameraSource
 
       if (keyFrameTimer) {
         clearInterval(keyFrameTimer)
+      }
+
+      if (maxRecordingTimer) {
+        clearTimeout(maxRecordingTimer)
       }
 
       if (liveCall) {

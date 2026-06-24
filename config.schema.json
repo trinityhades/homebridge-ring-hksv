@@ -53,6 +53,86 @@
         "maximum": 300,
         "description": "Optional safety cap for a single HKSV recording stream duration."
       },
+      "hksvVideoBitrateKbps": {
+        "title": "HKSV Video Bitrate (kbps)",
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 12000,
+        "default": 3000,
+        "description": "Target video bitrate for HKSV recording transcodes. Increase this first if fast motion becomes blocky or pixelated. 4000-6000 is a good starting range for wired cameras."
+      },
+      "hksvVideoMaxBitrateKbps": {
+        "title": "HKSV Max Video Bitrate (kbps)",
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 20000,
+        "description": "Maximum burst bitrate for HKSV recording transcodes. Defaults to 2x the target bitrate. A practical starting range is 8000-12000 when target bitrate is 4000-6000."
+      },
+      "hksvVideoBufferSizeKbps": {
+        "title": "HKSV Video Buffer Size (kbps)",
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 40000,
+        "description": "FFmpeg VBV buffer size for HKSV recording transcodes. Defaults to 2x the max video bitrate. Leave unset unless you are tuning bitrate stability."
+      },
+      "hksvVideoCrf": {
+        "title": "HKSV x264 Quality (CRF)",
+        "type": "integer",
+        "minimum": 18,
+        "maximum": 35,
+        "description": "Optional libx264 quality value. Lower values improve quality and use more bitrate/CPU. Try 20-23 if you stay on libx264. Ignored when using VideoToolbox."
+      },
+      "hksvVideoKeyframeInterval": {
+        "title": "HKSV Keyframe Interval",
+        "type": "integer",
+        "minimum": 5,
+        "maximum": 240,
+        "default": 30,
+        "description": "Maximum number of frames between video keyframes in HKSV recordings. 30 is the recommended default. Shorter intervals can improve fragmenting at the cost of bitrate."
+      },
+      "hksvVideoPreset": {
+        "title": "HKSV x264 Preset",
+        "type": "string",
+        "description": "libx264 speed/quality preset for HKSV recordings. veryfast is the recommended default. Move toward fast or medium for quality, or superfast for lower CPU. Ignored when using VideoToolbox.",
+        "oneOf": [
+          {
+            "title": "ultrafast",
+            "enum": ["ultrafast"]
+          },
+          {
+            "title": "superfast",
+            "enum": ["superfast"]
+          },
+          {
+            "title": "veryfast",
+            "enum": ["veryfast"]
+          },
+          {
+            "title": "faster",
+            "enum": ["faster"]
+          },
+          {
+            "title": "fast",
+            "enum": ["fast"]
+          },
+          {
+            "title": "medium",
+            "enum": ["medium"]
+          },
+          {
+            "title": "slow",
+            "enum": ["slow"]
+          },
+          {
+            "title": "slower",
+            "enum": ["slower"]
+          },
+          {
+            "title": "veryslow",
+            "enum": ["veryslow"]
+          }
+        ]
+      },
       "homeKitAccessoryTag": {
         "title": "HomeKit Accessory Tag",
         "type": "string",
@@ -61,7 +141,7 @@
       "cameraVideoCodec": {
         "title": "Camera Video Codec",
         "type": "string",
-        "description": "Preferred ffmpeg H.264 encoder for camera paths.",
+        "description": "Preferred FFmpeg H.264 encoder for HKSV recording transcodes. On Apple Silicon or newer Intel Macs, h264_videotoolbox is the recommended first choice because it uses hardware acceleration.",
         "oneOf": [
           {
             "title": "h264_videotoolbox",
@@ -215,6 +295,12 @@
         "hksvPrebufferLengthMs",
         "hksvFragmentLengthMs",
         "hksvMaxRecordingSeconds",
+        "hksvVideoBitrateKbps",
+        "hksvVideoMaxBitrateKbps",
+        "hksvVideoBufferSizeKbps",
+        "hksvVideoCrf",
+        "hksvVideoKeyframeInterval",
+        "hksvVideoPreset",
         "homeKitAccessoryTag",
         "cameraVideoCodec",
         "hideLightGroups",

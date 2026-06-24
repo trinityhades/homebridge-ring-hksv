@@ -15,6 +15,21 @@ export interface RingPlatformConfig extends RingApiOptions {
   hksvPrebufferLengthMs?: number
   hksvFragmentLengthMs?: number
   hksvMaxRecordingSeconds?: number
+  hksvVideoBitrateKbps?: number
+  hksvVideoMaxBitrateKbps?: number
+  hksvVideoBufferSizeKbps?: number
+  hksvVideoCrf?: number
+  hksvVideoKeyframeInterval?: number
+  hksvVideoPreset?:
+    | 'ultrafast'
+    | 'superfast'
+    | 'veryfast'
+    | 'faster'
+    | 'fast'
+    | 'medium'
+    | 'slow'
+    | 'slower'
+    | 'veryslow'
   homeKitAccessoryTag?: string
   cameraVideoCodec?: 'h264_videotoolbox' | 'libx264'
   beamDurationSeconds?: number
