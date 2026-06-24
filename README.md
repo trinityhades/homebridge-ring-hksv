@@ -31,6 +31,9 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | `hksvPrebufferLengthMs` | HKSV prebuffer duration (minimum 4000ms) |
 | `hksvFragmentLengthMs` | HKSV fragment duration target |
 | `hksvMaxRecordingSeconds` | Optional safety cap for a recording session |
+| `hksvVideoBitrateKbps` / `hksvVideoMaxBitrateKbps` / `hksvVideoBufferSizeKbps` | HKSV recording bitrate controls for improving fast-motion quality |
+| `hksvVideoCrf` / `hksvVideoPreset` | Optional libx264 quality and CPU tuning controls |
+| `hksvVideoKeyframeInterval` | HKSV recording keyframe interval |
 | `homeKitAccessoryTag` | Appends a tag to accessory names and HomeKit IDs so the same Ring device can be exposed as a distinct HomeKit accessory for debugging/testing |
 | `cameraVideoCodec` | Preferred H.264 encoder (`h264_videotoolbox` or `libx264`) |
 | `hideDoorbellSwitch` / `hideCameraMotionSensor` / `hideCameraSirenSwitch` | Hides specific HomeKit-exposed services |
@@ -85,6 +88,12 @@ HKSV support is experimental and actively evolving. Behavior may vary by camera 
 
 I currently am able to run 3 cameras with HKSV enabled on a Homebridge instance ran on a M4 Mac Mini 32GB of RAM.
 Please report your experience and setup details to help improve support.
+
+For fast-motion pixelation or stuttering in HKSV recordings, try increasing
+`hksvVideoBitrateKbps` first. On Apple Silicon Macs,
+`cameraVideoCodec: "h264_videotoolbox"` can reduce CPU load by using hardware
+encoding. A good starting point is 4000-6000 kbps target bitrate, 8000-12000
+kbps max bitrate, and the default keyframe interval of 30.
 
 ### Minimum specifications for HKSV: 
 [TBD - will be added as more users test and report their setups]
