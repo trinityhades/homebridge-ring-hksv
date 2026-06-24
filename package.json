@@ -1,7 +1,7 @@
 {
   "name": "homebridge-ring-hksv",
   "displayName": "Homebridge Ring HKSV",
-  "version": "14.3.7",
+  "version": "14.3.8",
   "description": "Homebridge plugin for Ring devices with HomeKit Secure Video support",
   "type": "module",
   "main": "./lib/index.js",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@homebridge/camera-utils": "^3.0.0",
     "@homebridge/plugin-ui-utils": "^2.1.2",
+    "homebridge-config-ui-x": "^5.24.0",
     "ring-client-api": "14.3.0",
     "werift": "0.22.4"
   },
@@ -26,12 +27,12 @@
     "concurrently": "^9.2.1",
     "eslint": "9.39.2",
     "globals": "17.3.0",
-    "homebridge": "1.11.1",
+    "homebridge": "^2.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.54.0"
   },
   "engines": {
-    "node": "^20 || ^22 || ^24",
+    "node": "^20 || ^22 || ^24 || ^26",
     "homebridge": ">=1.4.0 || ^2.0.0-beta.0"
   },
   "homebridge": {
@@ -84,5 +85,9 @@
     "category-video",
     "category-hubs",
     "category-outdoor"
-  ]
+  ],
+  "allowScripts": {
+    "ffmpeg-for-homebridge@2.2.1": true,
+    "protobufjs@7.6.4": true
+  }
 }

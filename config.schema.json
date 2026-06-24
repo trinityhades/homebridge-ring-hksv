@@ -53,6 +53,40 @@
         "maximum": 300,
         "description": "Optional safety cap for a single HKSV recording stream duration."
       },
+      "hksvPerformanceMode": {
+        "title": "HKSV Performance Mode",
+        "type": "string",
+        "description": "High-level HKSV tuning profile. Use rpi for Raspberry Pi and other small computers; it favors remuxing, lower advertised recording tiers, and conservative concurrency.",
+        "default": "balanced",
+        "oneOf": [
+          {
+            "title": "balanced",
+            "enum": ["balanced"]
+          },
+          {
+            "title": "rpi",
+            "enum": ["rpi"]
+          },
+          {
+            "title": "quality",
+            "enum": ["quality"]
+          }
+        ]
+      },
+      "hksvMaxQueuedBytes": {
+        "title": "HKSV Max Queued Bytes",
+        "type": "integer",
+        "minimum": 1048576,
+        "maximum": 67108864,
+        "description": "Maximum fragmented MP4 data queued in memory per HKSV recording stream before the stream is closed to protect Homebridge."
+      },
+      "hksvMaxConcurrentRecordings": {
+        "title": "HKSV Max Concurrent Recordings",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4,
+        "description": "Maximum number of simultaneous HKSV recording pipelines. Raspberry Pi users should keep this at 1."
+      },
       "hksvVideoBitrateKbps": {
         "title": "HKSV Video Bitrate (kbps)",
         "type": "integer",
@@ -141,8 +175,20 @@
       "cameraVideoCodec": {
         "title": "Camera Video Codec",
         "type": "string",
-        "description": "Preferred FFmpeg H.264 encoder for HKSV recording transcodes. On Apple Silicon or newer Intel Macs, h264_videotoolbox is the recommended first choice because it uses hardware acceleration.",
+        "description": "Preferred FFmpeg H.264 handling for HKSV recordings. auto chooses the lowest-cost option for the configured performance mode; copy remuxes Ring video without re-encoding.",
         "oneOf": [
+          {
+            "title": "auto",
+            "enum": ["auto"]
+          },
+          {
+            "title": "copy",
+            "enum": ["copy"]
+          },
+          {
+            "title": "h264_v4l2m2m",
+            "enum": ["h264_v4l2m2m"]
+          },
           {
             "title": "h264_videotoolbox",
             "enum": ["h264_videotoolbox"]
@@ -295,6 +341,9 @@
         "hksvPrebufferLengthMs",
         "hksvFragmentLengthMs",
         "hksvMaxRecordingSeconds",
+        "hksvPerformanceMode",
+        "hksvMaxQueuedBytes",
+        "hksvMaxConcurrentRecordings",
         "hksvVideoBitrateKbps",
         "hksvVideoMaxBitrateKbps",
         "hksvVideoBufferSizeKbps",

@@ -31,11 +31,13 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | `hksvPrebufferLengthMs` | HKSV prebuffer duration (minimum 4000ms) |
 | `hksvFragmentLengthMs` | HKSV fragment duration target |
 | `hksvMaxRecordingSeconds` | Optional safety cap for a recording session |
+| `hksvPerformanceMode` | HKSV tuning profile (`balanced`, `rpi`, or `quality`) |
+| `hksvMaxConcurrentRecordings` / `hksvMaxQueuedBytes` | HKSV safeguards for small systems under load |
 | `hksvVideoBitrateKbps` / `hksvVideoMaxBitrateKbps` / `hksvVideoBufferSizeKbps` | HKSV recording bitrate controls for improving fast-motion quality |
 | `hksvVideoCrf` / `hksvVideoPreset` | Optional libx264 quality and CPU tuning controls |
 | `hksvVideoKeyframeInterval` | HKSV recording keyframe interval |
 | `homeKitAccessoryTag` | Appends a tag to accessory names and HomeKit IDs so the same Ring device can be exposed as a distinct HomeKit accessory for debugging/testing |
-| `cameraVideoCodec` | Preferred H.264 encoder (`h264_videotoolbox` or `libx264`) |
+| `cameraVideoCodec` | Preferred H.264 handling (`auto`, `copy`, `h264_v4l2m2m`, `h264_videotoolbox`, or `libx264`) |
 | `hideDoorbellSwitch` / `hideCameraMotionSensor` / `hideCameraSirenSwitch` | Hides specific HomeKit-exposed services |
 | `showPanicButtons` | Adds panic switches (use with caution) |
 | `ffmpegPath` | Override FFmpeg binary path |
@@ -90,10 +92,28 @@ I currently am able to run 3 cameras with HKSV enabled on a Homebridge instance 
 Please report your experience and setup details to help improve support.
 
 For fast-motion pixelation or stuttering in HKSV recordings, try increasing
-`hksvVideoBitrateKbps` first. On Apple Silicon Macs,
+`hksvVideoBitrateKbps` first if you are transcoding. On Apple Silicon Macs,
 `cameraVideoCodec: "h264_videotoolbox"` can reduce CPU load by using hardware
-encoding. A good starting point is 4000-6000 kbps target bitrate, 8000-12000
-kbps max bitrate, and the default keyframe interval of 30.
+encoding.
+
+For Raspberry Pi 4/5 and other small computers, start with:
+
+```json
+{
+  "enableHksv": true,
+  "hksvPerformanceMode": "rpi",
+  "cameraVideoCodec": "auto",
+  "hksvMaxConcurrentRecordings": 1
+}
+```
+
+The `rpi` profile favors remuxing Ring's H.264 video into HomeKit Secure Video
+fragmented MP4 instead of re-encoding it. This is much lighter than libx264, but
+it depends on Ring's current stream being compatible with HomeKit's H.264
+recording requirements. If recording fails in this mode, try
+`cameraVideoCodec: "h264_v4l2m2m"` when your FFmpeg build exposes that encoder,
+or fall back to `cameraVideoCodec: "libx264"` with `hksvVideoPreset:
+"ultrafast"`.
 
 ### Minimum specifications for HKSV: 
 [TBD - will be added as more users test and report their setups]

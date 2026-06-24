@@ -20,6 +20,9 @@ export interface RingPlatformConfig extends RingApiOptions {
   hksvVideoBufferSizeKbps?: number
   hksvVideoCrf?: number
   hksvVideoKeyframeInterval?: number
+  hksvPerformanceMode?: 'quality' | 'balanced' | 'rpi'
+  hksvMaxQueuedBytes?: number
+  hksvMaxConcurrentRecordings?: number
   hksvVideoPreset?:
     | 'ultrafast'
     | 'superfast'
@@ -31,7 +34,12 @@ export interface RingPlatformConfig extends RingApiOptions {
     | 'slower'
     | 'veryslow'
   homeKitAccessoryTag?: string
-  cameraVideoCodec?: 'h264_videotoolbox' | 'libx264'
+  cameraVideoCodec?:
+    | 'auto'
+    | 'copy'
+    | 'h264_v4l2m2m'
+    | 'h264_videotoolbox'
+    | 'libx264'
   beamDurationSeconds?: number
   ffmpegPath?: string
   hideLightGroups?: boolean
