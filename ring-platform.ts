@@ -29,6 +29,7 @@ import {
   controlCenterDisplayName,
   debug,
   getSystemId,
+  rotateSystemId,
   updateHomebridgeConfig,
 } from './config.ts'
 import { Beam } from './beam.ts'
@@ -51,6 +52,13 @@ import { UnknownZWaveSwitchSwitch } from './unknown-zwave-switch.ts'
 import { generateMacAddress } from './util.ts'
 import { Intercom } from './intercom.ts'
 import { Valve } from './valve.ts'
+
+type WrappedRefreshToken = {
+  rt?: string
+  hid?: string
+  pnc?: unknown
+  [key: string]: unknown
+}
 
 const ignoreHiddenDeviceTypes: string[] = [
   RingDeviceType.RingNetAdapter,
@@ -145,6 +153,65 @@ function getAccessoryClass(
   return null
 }
 
+function removePushCredentialsFromRefreshToken(
+  refreshToken: string,
+  removeHardwareId = false,
+) {
+  try {
+    const authConfig = JSON.parse(
+      Buffer.from(refreshToken, 'base64').toString('utf8'),
+    ) as WrappedRefreshToken
+
+    if (
+      !authConfig.rt ||
+      (!authConfig.pnc && (!removeHardwareId || !authConfig.hid))
+    ) {
+      return
+    }
+
+    delete authConfig.pnc
+
+    if (removeHardwareId) {
+      delete authConfig.hid
+    }
+
+    return Buffer.from(JSON.stringify(authConfig)).toString('base64')
+  } catch {
+    return
+  }
+}
+
+function updateRefreshTokenInConfig(
+  configContents: string,
+  oldRefreshToken: string,
+  newRefreshToken: string,
+  clearRefreshFlags: boolean,
+) {
+  try {
+    const homebridgeConfig = JSON.parse(configContents),
+      platformConfig = homebridgeConfig.platforms?.find(
+        (platform: PlatformConfig) =>
+          platform.platform === platformName &&
+          platform.refreshToken === oldRefreshToken,
+      )
+
+    if (!platformConfig) {
+      throw new Error('Ring platform config not found')
+    }
+
+    platformConfig.refreshToken = newRefreshToken
+
+    if (clearRefreshFlags) {
+      platformConfig.forceRefreshRingPushCredentials = false
+      platformConfig.forceRefreshRingApiSession = false
+    }
+
+    return `${JSON.stringify(homebridgeConfig, null, 4)}\n`
+  } catch {
+    return configContents.replace(oldRefreshToken, newRefreshToken)
+  }
+}
+
 export class RingPlatform implements DynamicPlatformPlugin {
   private readonly homebridgeAccessories: {
     [uuid: string]: PlatformAccessory
@@ -209,7 +276,11 @@ export class RingPlatform implements DynamicPlatformPlugin {
 
   async connectToApi() {
     const { api, config } = this,
-      systemId = getSystemId(api.user.storagePath()),
+      shouldRotateRingApiSession =
+        config.forceRefreshRingApiSession && config.refreshToken,
+      systemId = shouldRotateRingApiSession
+        ? rotateSystemId(api.user.storagePath())
+        : getSystemId(api.user.storagePath()),
       configuredHomeKitAccessoryTag = config.homeKitAccessoryTag?.trim(),
       accessoryIdSuffix = configuredHomeKitAccessoryTag
         ? `-${configuredHomeKitAccessoryTag}`
@@ -217,12 +288,61 @@ export class RingPlatform implements DynamicPlatformPlugin {
       accessoryNameSuffix = configuredHomeKitAccessoryTag
         ? ` (${configuredHomeKitAccessoryTag})`
         : '',
-      ringApi = new RingApi({
+      refreshTokenWithoutPushCredentials =
+        (config.forceRefreshRingPushCredentials ||
+          shouldRotateRingApiSession) &&
+        config.refreshToken
+          ? removePushCredentialsFromRefreshToken(
+            config.refreshToken,
+            Boolean(shouldRotateRingApiSession),
+          )
+          : undefined
+
+    if (shouldRotateRingApiSession) {
+      logInfo(
+        'Forcing Ring API session refresh because forceRefreshRingApiSession is enabled',
+      )
+    }
+
+    if (refreshTokenWithoutPushCredentials) {
+      logInfo(
+        'Forcing Ring push credential refresh because Ring push credentials were removed from the startup token',
+      )
+    }
+
+    const ringApi = new RingApi({
         controlCenterDisplayName,
         ...config,
+        ...(refreshTokenWithoutPushCredentials
+          ? { refreshToken: refreshTokenWithoutPushCredentials }
+          : {}),
         systemId,
       }),
-      locations = await ringApi.getLocations(),
+      refreshTokenToReplace =
+        refreshTokenWithoutPushCredentials && config.refreshToken
+          ? config.refreshToken
+          : undefined
+
+    ringApi.onRefreshTokenUpdated.subscribe(
+      ({ oldRefreshToken, newRefreshToken }) => {
+        const configRefreshToken = refreshTokenToReplace ?? oldRefreshToken
+
+        if (!configRefreshToken) {
+          return
+        }
+
+        updateHomebridgeConfig(this.api, (configContents) => {
+          return updateRefreshTokenInConfig(
+            configContents,
+            configRefreshToken,
+            newRefreshToken,
+            Boolean(refreshTokenWithoutPushCredentials),
+          )
+        })
+      },
+    )
+
+    const locations = await ringApi.getLocations(),
       cachedAccessoryIds = Object.keys(this.homebridgeAccessories),
       platformAccessories: PlatformAccessory[] = [],
       externalAccessories: PlatformAccessory[] = [],
@@ -404,16 +524,5 @@ export class RingPlatform implements DynamicPlatformPlugin {
       )
     }
 
-    ringApi.onRefreshTokenUpdated.subscribe(
-      ({ oldRefreshToken, newRefreshToken }) => {
-        if (!oldRefreshToken) {
-          return
-        }
-
-        updateHomebridgeConfig(this.api, (configContents) => {
-          return configContents.replace(oldRefreshToken, newRefreshToken)
-        })
-      },
-    )
   }
 }

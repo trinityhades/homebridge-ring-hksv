@@ -2,12 +2,20 @@ import { hap } from './hap.ts'
 import type { RingPlatformConfig } from './config.ts'
 import type { RingCamera } from 'ring-client-api'
 import { BaseDataAccessory } from './base-data-accessory.ts'
-import { filter, map, switchMap, throttleTime } from 'rxjs/operators'
+import {
+  catchError,
+  filter,
+  map,
+  mergeMap,
+  switchMap,
+  throttleTime,
+} from 'rxjs/operators'
 import { CameraSource } from './camera-source.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { TargetValueTimer } from './target-value-timer.ts'
 import { delay, logError, logInfo } from 'ring-client-api/util'
-import { firstValueFrom } from 'rxjs'
+import { concat, EMPTY, firstValueFrom, from, merge, of, timer } from 'rxjs'
+import type { Observable } from 'rxjs'
 
 export class Camera extends BaseDataAccessory<RingCamera> {
   private inHomeDoorbellStatus: boolean | undefined
@@ -57,7 +65,7 @@ export class Camera extends BaseDataAccessory<RingCamera> {
       this.registerObservableCharacteristic({
         characteristicType: Characteristic.MotionDetected,
         serviceType: Service.MotionSensor,
-        onValue: device.onMotionDetected.pipe(
+        onValue: this.getMotionDetectedObservable().pipe(
           switchMap((motion) => {
             if (!motion) {
               return Promise.resolve(false)
@@ -213,6 +221,74 @@ export class Camera extends BaseDataAccessory<RingCamera> {
         ),
       })
     }
+  }
+
+  private getMotionDetectedObservable(): Observable<boolean> {
+    const pollSeconds = Math.max(this.config.cameraStatusPollingSeconds ?? 20, 10),
+      startedAt = Date.now() - 5000,
+      seenEventIds = new Set<string>(),
+      pushMotionEvents = this.device.onMotionDetected,
+      polledMotionEvents = timer(pollSeconds * 1000, pollSeconds * 1000).pipe(
+        switchMap(() =>
+          from(
+            this.device.getEvents({
+              limit: 10,
+              kind: 'motion',
+            }),
+          ).pipe(
+            mergeMap(({ events }) => {
+              const newMotionEvents = events
+                .filter((event) => {
+                  const eventId = event.ding_id_str || String(event.ding_id)
+
+                  return (
+                    event.kind === 'motion' &&
+                    Date.parse(event.created_at) >= startedAt &&
+                    !seenEventIds.has(eventId)
+                  )
+                })
+                .sort(
+                  (a, b) =>
+                    Date.parse(a.created_at) - Date.parse(b.created_at),
+                )
+
+              newMotionEvents.forEach((event) => {
+                seenEventIds.add(event.ding_id_str || String(event.ding_id))
+              })
+
+              if (!newMotionEvents.length) {
+                return EMPTY
+              }
+
+              logInfo(
+                `${this.device.name} Detected Motion from Ring event history fallback`,
+              )
+
+              return concat(
+                of(true),
+                timer(65000).pipe(map(() => false)),
+              )
+            }),
+            catchError((error) => {
+              logError(
+                `${this.device.name} Failed to poll Ring event history for motion fallback`,
+              )
+              logError(error)
+              return EMPTY
+            }),
+          ),
+        ),
+      )
+
+    this.device.onNewNotification.subscribe((notification) => {
+      const dingId = notification.data?.event?.ding?.id
+
+      if (dingId) {
+        seenEventIds.add(String(dingId))
+      }
+    })
+
+    return merge(pushMotionEvents, polledMotionEvents)
   }
 
   private async loadSnapshotForEvent<T>(

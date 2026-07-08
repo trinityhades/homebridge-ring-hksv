@@ -11,6 +11,8 @@ export const controlCenterDisplayName = 'homebridge-ring-hksv'
 export interface RingPlatformConfig extends RingApiOptions {
   alarmOnEntryDelay?: boolean
   enableHksv?: boolean
+  forceRefreshRingPushCredentials?: boolean
+  forceRefreshRingApiSession?: boolean
   disableHksvOnBattery?: boolean
   hksvPrebufferLengthMs?: number
   hksvFragmentLengthMs?: number
@@ -108,6 +110,22 @@ export function getSystemId(homebridgeStoragePath: string) {
     writeFileSync(filePath, JSON.stringify(ringContext))
   } catch (error) {
     logError('Failed to persist Ring system id')
+    logError(error)
+  }
+
+  return systemId
+}
+
+export function rotateSystemId(homebridgeStoragePath: string) {
+  const filePath = join(homebridgeStoragePath, systemIdFileName),
+    systemId = createSystemId(),
+    ringContext: RingContext = { systemId }
+
+  try {
+    mkdirSync(homebridgeStoragePath, { recursive: true })
+    writeFileSync(filePath, JSON.stringify(ringContext))
+  } catch (error) {
+    logError('Failed to rotate Ring system id')
     logError(error)
   }
 

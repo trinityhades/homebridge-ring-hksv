@@ -26,6 +26,16 @@
         "type": "boolean",
         "description": "Enables HomeKit Secure Video services for supported Ring cameras. This implementation is currently in-progress."
       },
+      "forceRefreshRingPushCredentials": {
+        "title": "Force Ring Push Credential Refresh",
+        "type": "boolean",
+        "description": "Advanced recovery option: forces a fresh Ring push notification registration on next startup. Enable only when Ring motion/button events are not arriving live, restart Homebridge, then disable after the updated refresh token is saved."
+      },
+      "forceRefreshRingApiSession": {
+        "title": "Force Ring API Session Refresh",
+        "type": "boolean",
+        "description": "Advanced recovery option: rotates the Ring API hardware/session identity and forces fresh push credentials on next startup. Try this when refreshing only Ring push credentials still leaves motion/button events delayed or missing. The option clears itself after the updated refresh token is saved."
+      },
       "disableHksvOnBattery": {
         "title": "Disable HKSV On Battery Cameras",
         "type": "boolean",
@@ -344,6 +354,8 @@
           "items": [
             "alarmOnEntryDelay",
             "enableHksv",
+            "forceRefreshRingPushCredentials",
+            "forceRefreshRingApiSession",
             "disableHksvOnBattery",
             "hksvVideoPreset",
             "cameraVideoCodec",

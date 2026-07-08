@@ -71,7 +71,7 @@ npm run build
 To publish an opt-in prerelease channel to npm:
 
 ```bash
-npm run publish:dev
+npm run publish:beta
 npm run publish:nightly
 ```
 

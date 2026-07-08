@@ -519,6 +519,8 @@ export class CameraSource
       videoArguments = selectedCodec === 'copy'
         ? ['-vcodec', 'copy']
         : [
+        '-vf',
+        'scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-vcodec',
         selectedCodec,
         '-b:v',
@@ -559,6 +561,10 @@ export class CameraSource
           `${getIntegerConfigValue(hksvVideoCrf, 23, 18, 35)}`,
         )
       }
+    }
+
+    if (selectedCodec === 'h264_videotoolbox') {
+      videoArguments.push('-allow_sw', '1', '-realtime', '1')
     }
 
     return videoArguments
@@ -831,15 +837,22 @@ export class CameraSource
       waitForPacket = undefined
     }
 
-    const closeSession = () => {
+    let shouldSendEndOfStream = false,
+      sentEndOfStream = false
+
+    const closeSessionWithEndOfStream = (sendEndOfStream = true) => {
         if (closed) {
           return
         }
 
+        shouldSendEndOfStream ||= sendEndOfStream
         closed = true
         this.closedRecordingStreams.add(streamId)
         this.activeRecordingSessions.delete(streamId)
         wake()
+      },
+      closeSession = () => {
+        closeSessionWithEndOfStream(false)
       },
       enqueuePacket = (packet: RecordingPacket) => {
         queuedBytes += packet.data.length
@@ -848,7 +861,7 @@ export class CameraSource
           logInfo(
             `HKSV recording queue limit reached for ${this.ringCamera.name} (streamId=${streamId}, queuedBytes=${queuedBytes}, maxQueuedBytes=${maxQueuedBytes})`,
           )
-          closeSession()
+          closeSessionWithEndOfStream()
           return
         }
 
@@ -868,7 +881,10 @@ export class CameraSource
       releaseQueueSlot = await hksvRecordingQueue.acquire()
       const capabilities = await getFfmpegCapabilities(),
         videoArguments = this.getHksvVideoArguments(capabilities),
-        selectedVideoCodec = String(videoArguments[1])
+        videoCodecIndex = videoArguments.indexOf('-vcodec'),
+        selectedVideoCodec = videoCodecIndex >= 0
+          ? String(videoArguments[videoCodecIndex + 1])
+          : 'unknown'
 
       logInfo(
         `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
@@ -877,12 +893,12 @@ export class CameraSource
       liveCall = await this.ringCamera.startLiveCall()
 
       liveCall.onCallEnded.pipe(take(1)).subscribe(() => {
-        closeSession()
+        closeSessionWithEndOfStream()
       })
 
       const maxRecordingSeconds = getIntegerConfigValue(
         this.config.hksvMaxRecordingSeconds,
-        0,
+        60,
         0,
         300,
       )
@@ -892,7 +908,7 @@ export class CameraSource
           logInfo(
             `HKSV recording stream reached max duration for ${this.ringCamera.name} (streamId=${streamId}, maxSeconds=${maxRecordingSeconds})`,
           )
-          closeSession()
+          closeSessionWithEndOfStream()
         }, maxRecordingSeconds * 1000)
       }
 
@@ -938,11 +954,30 @@ export class CameraSource
         liveCall?.requestKeyFrame()
       }, selectedVideoCodec === 'copy' ? Math.max(fragmentLengthMs, 1000) : 2000)
 
-      while (!closed) {
+      while (
+        !closed ||
+        packetQueue.length ||
+        (shouldSendEndOfStream && !sentEndOfStream)
+      ) {
         if (packetQueue.length) {
           const packet = packetQueue.shift()!
           queuedBytes -= packet.data.length
+
+          if (closed && shouldSendEndOfStream && !packetQueue.length) {
+            packet.isLast = true
+            sentEndOfStream = true
+          }
+
           yield packet
+          continue
+        }
+
+        if (closed && shouldSendEndOfStream && !sentEndOfStream) {
+          sentEndOfStream = true
+          yield {
+            data: Buffer.alloc(0),
+            isLast: true,
+          }
           continue
         }
 
@@ -954,7 +989,7 @@ export class CameraSource
     } catch (e) {
       logError(`Failed to stream HKSV recording for ${this.ringCamera.name}`)
       logError(e)
-      closeSession()
+      closeSessionWithEndOfStream()
     } finally {
       logInfo(
         `HKSV recording pipeline ended for ${this.ringCamera.name} (streamId=${streamId}, duration=${getDurationSeconds(start)}s, queuedBytes=${queuedBytes})`,
