@@ -27,6 +27,7 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | Option | Purpose |
 | --- | --- |
 | `enableHksv` | Enables experimental HKSV support for eligible cameras |
+| `enableCameraMotionHistory` | Allows camera motion to fall back to recent Ring event history if live notifications are stale; disable to only trust push-triggered motion |
 | `disableHksvOnBattery` | Disables HKSV on battery cameras to reduce battery/network usage |
 | `hksvPrebufferLengthMs` | HKSV prebuffer duration (minimum 4000ms) |
 | `hksvFragmentLengthMs` | HKSV fragment duration target |

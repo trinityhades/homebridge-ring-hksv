@@ -228,6 +228,8 @@ export class Camera extends BaseDataAccessory<RingCamera> {
       startedAt = Date.now() - 5000,
       seenEventIds = new Set<string>(),
       pushMotionEvents = this.device.onMotionDetected,
+      enableMotionHistoryFallback =
+        this.config.enableCameraMotionHistory !== false,
       polledMotionEvents = timer(pollSeconds * 1000, pollSeconds * 1000).pipe(
         switchMap(() =>
           from(
@@ -279,6 +281,10 @@ export class Camera extends BaseDataAccessory<RingCamera> {
           ),
         ),
       )
+
+    if (!enableMotionHistoryFallback) {
+      return pushMotionEvents
+    }
 
     this.device.onNewNotification.subscribe((notification) => {
       const dingId = notification.data?.event?.ding?.id

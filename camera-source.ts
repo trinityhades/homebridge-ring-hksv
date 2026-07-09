@@ -29,7 +29,7 @@ import {
 } from 'homebridge'
 import { logDebug, logError, logInfo } from 'ring-client-api/util'
 import { debounceTime, delay, take } from 'rxjs/operators'
-import { interval, merge, of, Subject } from 'rxjs'
+import { interval, merge, of, Subject, Subscription } from 'rxjs'
 import { readFile } from 'fs'
 import { promisify } from 'util'
 import { getFfmpegPath } from 'ring-client-api/ffmpeg'
@@ -99,6 +99,136 @@ function getRecordingAbortError() {
   return error
 }
 
+interface SourceSessionLease {
+  streamingSession: StreamingSession
+  release: () => void
+}
+
+interface ManagedSourceSession {
+  id: number
+  promise: Promise<StreamingSession>
+  session?: StreamingSession
+  consumers: number
+  ended: boolean
+}
+
+class CameraSourceSessionManager {
+  private current?: ManagedSourceSession
+  private nextSessionId = 1
+  private ringCamera
+
+  constructor(ringCamera: RingCamera) {
+    this.ringCamera = ringCamera
+  }
+
+  async acquire(consumer: string): Promise<SourceSessionLease> {
+    const sourceSession =
+      this.current && !this.current.ended
+        ? this.current
+        : this.createSourceSession(consumer)
+
+    sourceSession.consumers++
+
+    if (sourceSession.consumers > 1) {
+      logInfo(
+        `Reusing Ring live source for ${this.ringCamera.name} (${sourceSession.consumers} consumers, ${consumer})`,
+      )
+    }
+
+    let released = false
+
+    const release = () => {
+      if (released) {
+        return
+      }
+
+      released = true
+      sourceSession.consumers = Math.max(sourceSession.consumers - 1, 0)
+
+      if (sourceSession.consumers > 0 || sourceSession.ended) {
+        return
+      }
+
+      if (this.current === sourceSession) {
+        this.current = undefined
+      }
+
+      logDebug(
+        `Stopping Ring live source for ${this.ringCamera.name} (session=${sourceSession.id})`,
+      )
+      sourceSession.session?.stop()
+      sourceSession.promise
+        .then((session) => {
+          if (!sourceSession.ended && sourceSession.consumers === 0) {
+            session.stop()
+          }
+        })
+        .catch(() => {
+          // Startup errors are reported to the acquiring consumer.
+        })
+    }
+
+    try {
+      const streamingSession = await sourceSession.promise
+
+      if (released) {
+        throw getRecordingAbortError()
+      }
+
+      return {
+        streamingSession,
+        release,
+      }
+    } catch (e) {
+      release()
+      throw e
+    }
+  }
+
+  private createSourceSession(consumer: string) {
+    const sourceSession: ManagedSourceSession = {
+      id: this.nextSessionId++,
+      promise: undefined as unknown as Promise<StreamingSession>,
+      consumers: 0,
+      ended: false,
+    }
+
+    logInfo(`Starting Ring live source for ${this.ringCamera.name} (${consumer})`)
+
+    sourceSession.promise = this.ringCamera
+      .startLiveCall()
+      .then((session) => {
+        sourceSession.session = session
+
+        session.onCallEnded.pipe(take(1)).subscribe(() => {
+          sourceSession.ended = true
+
+          if (this.current === sourceSession) {
+            this.current = undefined
+          }
+
+          logDebug(
+            `Ring live source ended for ${this.ringCamera.name} (session=${sourceSession.id})`,
+          )
+        })
+
+        return session
+      })
+      .catch((e) => {
+        sourceSession.ended = true
+
+        if (this.current === sourceSession) {
+          this.current = undefined
+        }
+
+        throw e
+      })
+
+    this.current = sourceSession
+    return sourceSession
+  }
+}
+
 class StreamingSessionWrapper {
   audioSsrc = hap.CameraController.generateSynchronisationSource()
   videoSsrc = hap.CameraController.generateSynchronisationSource()
@@ -112,14 +242,18 @@ class StreamingSessionWrapper {
   public prepareStreamRequest
   public ringCamera
   public start
+  private sourceSession
+  private subscriptions = new Subscription()
+  private stopped = false
 
   constructor(
-    streamingSession: StreamingSession,
+    sourceSession: SourceSessionLease,
     prepareStreamRequest: PrepareStreamRequest,
     ringCamera: RingCamera,
     start: number,
   ) {
-    this.streamingSession = streamingSession
+    this.sourceSession = sourceSession
+    this.streamingSession = sourceSession.streamingSession
     this.prepareStreamRequest = prepareStreamRequest
     this.ringCamera = ringCamera
     this.start = start
@@ -144,7 +278,7 @@ class StreamingSessionWrapper {
       onReturnPacketReceived.next(null)
       return null
     })
-    streamingSession.addSubscriptions(
+    this.subscriptions.add(
       merge(of(true).pipe(delay(15000)), onReturnPacketReceived)
         .pipe(debounceTime(5000))
         .subscribe(() => {
@@ -153,13 +287,13 @@ class StreamingSessionWrapper {
               this.ringCamera.name
             } appears to be inactive. (${getDurationSeconds(start)}s)`,
           )
-          streamingSession.stop()
+          this.stop()
         }),
     )
 
     // Periodically send a blank RTCP packet to the HomeKit video port
     // Without this, HomeKit assumes the stream is dead after 30 second and sends a stop request
-    streamingSession.addSubscriptions(
+    this.subscriptions.add(
       interval(500).subscribe(() => {
         const senderInfo = new RtcpSenderInfo({
             ntpTimestamp: BigInt(0),
@@ -179,6 +313,12 @@ class StreamingSessionWrapper {
             address: targetAddress,
           })
           .catch(logError)
+      }),
+    )
+
+    this.subscriptions.add(
+      this.streamingSession.onCallEnded.pipe(take(1)).subscribe(() => {
+        this.stop()
       }),
     )
   }
@@ -233,7 +373,7 @@ class StreamingSessionWrapper {
       videoSrtpSession = new SrtpSession(getSessionConfig(this.videoSrtp))
 
     // Set up packet forwarding for video stream
-    this.streamingSession.addSubscriptions(
+    this.subscriptions.add(
       this.streamingSession.onVideoRtp.subscribe(({ header, payload }) => {
         header.ssrc = this.videoSsrc
         header.payloadType = request.video.pt
@@ -355,10 +495,16 @@ class StreamingSessionWrapper {
   }
 
   stop() {
+    if (this.stopped) {
+      return
+    }
+
+    this.stopped = true
+    this.subscriptions.unsubscribe()
     this.audioSplitter.close()
     this.transcodedAudioSplitter.close()
     this.videoSplitter.close()
-    this.streamingSession.stop()
+    this.sourceSession.release()
   }
 }
 
@@ -370,6 +516,7 @@ export class CameraSource
   private cachedSnapshot?: Buffer
   private ringCamera
   private config: RingPlatformConfig
+  private sourceSessionManager
 
   private recordingActive = false
   private recordingConfiguration?: CameraRecordingConfiguration
@@ -380,6 +527,7 @@ export class CameraSource
   constructor(ringCamera: RingCamera, config: RingPlatformConfig) {
     this.ringCamera = ringCamera
     this.config = config
+    this.sourceSessionManager = new CameraSourceSessionManager(ringCamera)
     hksvRecordingQueue.setConcurrency(
       getIntegerConfigValue(
         config.hksvMaxConcurrentRecordings,
@@ -704,9 +852,9 @@ export class CameraSource
     logInfo(`Preparing Live Stream for ${this.ringCamera.name}`)
 
     try {
-      const liveCall = await this.ringCamera.startLiveCall(),
+      const sourceSession = await this.sourceSessionManager.acquire('live stream'),
         session = new StreamingSessionWrapper(
-          liveCall,
+          sourceSession,
           request,
           this.ringCamera,
           start,
@@ -769,6 +917,8 @@ export class CameraSource
       } catch (e) {
         logError('Failed to activate stream')
         logError(e)
+        session.stop()
+        delete this.sessions[sessionID]
         callback(new Error('Failed to activate stream'))
 
         return
@@ -892,6 +1042,7 @@ export class CameraSource
     this.recordingWaiters.set(streamId, closeSession)
     this.activeRecordingSessions.set(streamId, closeSession)
 
+    let sourceSession: SourceSessionLease | undefined
     let liveCall: StreamingSession | undefined
     let keyFrameTimer: ReturnType<typeof setInterval> | undefined
     let maxRecordingTimer: ReturnType<typeof setTimeout> | undefined
@@ -932,8 +1083,9 @@ export class CameraSource
         `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
       )
 
-      liveCall = await this.ringCamera.startLiveCall()
-      stopActiveLiveCall = () => liveCall?.stop()
+      sourceSession = await this.sourceSessionManager.acquire('HKSV recording')
+      liveCall = sourceSession.streamingSession
+      stopActiveLiveCall = () => sourceSession?.release()
       throwIfClosed()
       resetStallTimer()
 
@@ -1058,9 +1210,7 @@ export class CameraSource
         clearTimeout(stallTimer)
       }
 
-      if (liveCall) {
-        liveCall.stop()
-      }
+      sourceSession?.release()
 
       releaseQueueSlot?.()
     }

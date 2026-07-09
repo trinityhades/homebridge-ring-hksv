@@ -36,6 +36,12 @@
         "type": "boolean",
         "description": "Advanced recovery option: rotates the Ring API hardware/session identity and forces fresh push credentials on next startup. Try this when refreshing only Ring push credentials still leaves motion/button events delayed or missing. The option clears itself after the updated refresh token is saved."
       },
+      "enableCameraMotionHistory": {
+        "title": "Enable Camera Motion History Fallback",
+        "type": "boolean",
+        "description": "If enabled, cameras can synthesize motion from recent Ring event history when live push notifications are missing or stale. Disable this if you only want motion triggered by Ring notifications.",
+        "default": true
+      },
       "disableHksvOnBattery": {
         "title": "Disable HKSV On Battery Cameras",
         "type": "boolean",
@@ -356,6 +362,7 @@
             "enableHksv",
             "forceRefreshRingPushCredentials",
             "forceRefreshRingApiSession",
+            "enableCameraMotionHistory",
             "disableHksvOnBattery",
             "hksvVideoPreset",
             "cameraVideoCodec",

@@ -28,6 +28,7 @@ import type { RingPlatformConfig } from './config.ts'
 import {
   controlCenterDisplayName,
   debug,
+  getPluginVersion,
   getSystemId,
   rotateSystemId,
   updateHomebridgeConfig,
@@ -186,6 +187,7 @@ function updateRefreshTokenInConfig(
   oldRefreshToken: string,
   newRefreshToken: string,
   clearRefreshFlags: boolean,
+  pluginVersion: string,
 ) {
   try {
     const homebridgeConfig = JSON.parse(configContents),
@@ -206,16 +208,64 @@ function updateRefreshTokenInConfig(
       platformConfig.forceRefreshRingApiSession = false
     }
 
+    platformConfig.lastKnownPluginVersion = pluginVersion
+
     return `${JSON.stringify(homebridgeConfig, null, 4)}\n`
   } catch {
     return configContents.replace(oldRefreshToken, newRefreshToken)
   }
 }
 
+function enableRefreshOnPluginUpdate(
+  api: API,
+  config: PlatformConfig & RingPlatformConfig & RefreshTokenAuth,
+  pluginVersion: string,
+) {
+  const lastKnownPluginVersion = config.lastKnownPluginVersion
+
+  if (
+    !config.refreshToken ||
+    pluginVersion === 'unknown' ||
+    lastKnownPluginVersion === pluginVersion
+  ) {
+    return false
+  }
+
+  config.forceRefreshRingPushCredentials = true
+  config.forceRefreshRingApiSession = true
+  config.lastKnownPluginVersion = pluginVersion
+
+  updateHomebridgeConfig(api, (configContents) => {
+    try {
+      const homebridgeConfig = JSON.parse(configContents),
+        platformConfig = homebridgeConfig.platforms?.find(
+          (platform: PlatformConfig) =>
+            platform.platform === platformName &&
+            platform.refreshToken === config.refreshToken,
+        )
+
+      if (!platformConfig) {
+        throw new Error('Ring platform config not found')
+      }
+
+      platformConfig.forceRefreshRingPushCredentials = true
+      platformConfig.forceRefreshRingApiSession = true
+      platformConfig.lastKnownPluginVersion = pluginVersion
+
+      return `${JSON.stringify(homebridgeConfig, null, 4)}\n`
+    } catch {
+      return configContents
+    }
+  })
+
+  return true
+}
+
 export class RingPlatform implements DynamicPlatformPlugin {
   private readonly homebridgeAccessories: {
     [uuid: string]: PlatformAccessory
   } = {}
+  private readonly pluginVersion = getPluginVersion()
 
   public log
   public config
@@ -248,6 +298,12 @@ export class RingPlatform implements DynamicPlatformPlugin {
 
     config.cameraStatusPollingSeconds = config.cameraStatusPollingSeconds ?? 20
     config.locationModePollingSeconds = config.locationModePollingSeconds ?? 20
+
+    if (enableRefreshOnPluginUpdate(api, config, this.pluginVersion)) {
+      logInfo(
+        `Detected plugin update to ${this.pluginVersion}; forcing Ring push credential and API session refresh on this startup`,
+      )
+    }
 
     this.api.on('didFinishLaunching', () => {
       this.log.debug('didFinishLaunching')
@@ -337,6 +393,7 @@ export class RingPlatform implements DynamicPlatformPlugin {
             configRefreshToken,
             newRefreshToken,
             Boolean(refreshTokenWithoutPushCredentials),
+            this.pluginVersion,
           )
         })
       },
