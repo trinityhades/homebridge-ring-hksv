@@ -89,6 +89,10 @@ function getIntegerConfigValue(
   return Math.min(Math.max(Math.round(value!), min), max)
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
 class StreamingSessionWrapper {
   audioSsrc = hap.CameraController.generateSynchronisationSource()
   videoSsrc = hap.CameraController.generateSynchronisationSource()
@@ -839,6 +843,8 @@ export class CameraSource
 
     let shouldSendEndOfStream = false,
       sentEndOfStream = false
+    const queueAbortController = new AbortController()
+    let stopActiveLiveCall: (() => void) | undefined
 
     const closeSessionWithEndOfStream = (sendEndOfStream = true) => {
         if (closed) {
@@ -849,6 +855,8 @@ export class CameraSource
         closed = true
         this.closedRecordingStreams.add(streamId)
         this.activeRecordingSessions.delete(streamId)
+        queueAbortController.abort()
+        stopActiveLiveCall?.()
         wake()
       },
       closeSession = () => {
@@ -878,7 +886,7 @@ export class CameraSource
     let releaseQueueSlot: (() => void) | undefined
 
     try {
-      releaseQueueSlot = await hksvRecordingQueue.acquire()
+      releaseQueueSlot = await hksvRecordingQueue.acquire(queueAbortController.signal)
       const capabilities = await getFfmpegCapabilities(),
         videoArguments = this.getHksvVideoArguments(capabilities),
         videoCodecIndex = videoArguments.indexOf('-vcodec'),
@@ -891,6 +899,7 @@ export class CameraSource
       )
 
       liveCall = await this.ringCamera.startLiveCall()
+      stopActiveLiveCall = () => liveCall?.stop()
 
       liveCall.onCallEnded.pipe(take(1)).subscribe(() => {
         closeSessionWithEndOfStream()
@@ -987,8 +996,10 @@ export class CameraSource
         })
       }
     } catch (e) {
-      logError(`Failed to stream HKSV recording for ${this.ringCamera.name}`)
-      logError(e)
+      if (!isAbortError(e)) {
+        logError(`Failed to stream HKSV recording for ${this.ringCamera.name}`)
+        logError(e)
+      }
       closeSessionWithEndOfStream()
     } finally {
       logInfo(

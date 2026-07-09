@@ -1,6 +1,10 @@
 class WorkQueue {
   private active = 0
-  private waiters: Array<() => void> = []
+  private waiters: Array<{
+    resolve: () => void
+    reject: (error: Error) => void
+    abort: () => void
+  }> = []
   private concurrency: number
 
   constructor(concurrency: number) {
@@ -12,18 +16,45 @@ class WorkQueue {
     this.drain()
   }
 
-  async acquire() {
-    if (this.active < this.concurrency) {
-      this.active++
-      return () => this.release()
+  async acquire(signal?: AbortSignal) {
+    if (signal?.aborted) {
+      throw this.getAbortError()
     }
 
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve)
+    if (this.active < this.concurrency) {
+      this.active++
+      return this.getRelease()
+    }
+
+    let waiter:
+      | {
+          resolve: () => void
+          reject: (error: Error) => void
+          abort: () => void
+        }
+      | undefined
+
+    await new Promise<void>((resolve, reject) => {
+      waiter = {
+        resolve,
+        reject,
+        abort: () => {
+          this.waiters = this.waiters.filter((item) => item !== waiter)
+          reject(this.getAbortError())
+        },
+      }
+
+      signal?.addEventListener('abort', waiter.abort, { once: true })
+      this.waiters.push(waiter)
+    }).finally(() => {
+      if (waiter) {
+        signal?.removeEventListener('abort', waiter.abort)
+      }
+      signal?.throwIfAborted()
     })
 
     this.active++
-    return () => this.release()
+    return this.getRelease()
   }
 
   private release() {
@@ -33,8 +64,27 @@ class WorkQueue {
 
   private drain() {
     while (this.active < this.concurrency && this.waiters.length) {
-      this.waiters.shift()?.()
+      this.waiters.shift()?.resolve()
     }
+  }
+
+  private getRelease() {
+    let released = false
+
+    return () => {
+      if (released) {
+        return
+      }
+
+      released = true
+      this.release()
+    }
+  }
+
+  private getAbortError() {
+    const error = new Error('HKSV recording request closed before it started')
+    error.name = 'AbortError'
+    return error
   }
 }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop HKSV recording live calls immediately when HomeKit closes a recording stream, and cancel queued recording requests that are already closed before starting FFmpeg. This prevents stale HKSV FFmpeg processes from accumulating after abandoned recording sessions.
+
 ## 14.3.9
 
 ### Patch Changes
