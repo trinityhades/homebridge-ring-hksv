@@ -53,6 +53,8 @@ import {
   selectHksvVideoCodec,
 } from './hksv-options.ts'
 import { hksvRecordingQueue } from './hksv-work-queue.ts'
+import { RingMediaIngress, type MediaIngressLease } from './ring-media-ingress.ts'
+import { normalizeMediaConfig } from './media-config.ts'
 
 const __dirname = new URL('.', import.meta.url).pathname,
   mediaDirectory = path.join(__dirname.replace(/\/lib\/?$/, ''), 'media'),
@@ -99,134 +101,10 @@ function getRecordingAbortError() {
   return error
 }
 
-interface SourceSessionLease {
-  streamingSession: StreamingSession
-  release: () => void
-}
-
-interface ManagedSourceSession {
-  id: number
-  promise: Promise<StreamingSession>
-  session?: StreamingSession
-  consumers: number
-  ended: boolean
-}
-
-class CameraSourceSessionManager {
-  private current?: ManagedSourceSession
-  private nextSessionId = 1
-  private ringCamera
-
-  constructor(ringCamera: RingCamera) {
-    this.ringCamera = ringCamera
-  }
-
-  async acquire(consumer: string): Promise<SourceSessionLease> {
-    const sourceSession =
-      this.current && !this.current.ended
-        ? this.current
-        : this.createSourceSession(consumer)
-
-    sourceSession.consumers++
-
-    if (sourceSession.consumers > 1) {
-      logInfo(
-        `Reusing Ring live source for ${this.ringCamera.name} (${sourceSession.consumers} consumers, ${consumer})`,
-      )
-    }
-
-    let released = false
-
-    const release = () => {
-      if (released) {
-        return
-      }
-
-      released = true
-      sourceSession.consumers = Math.max(sourceSession.consumers - 1, 0)
-
-      if (sourceSession.consumers > 0 || sourceSession.ended) {
-        return
-      }
-
-      if (this.current === sourceSession) {
-        this.current = undefined
-      }
-
-      logDebug(
-        `Stopping Ring live source for ${this.ringCamera.name} (session=${sourceSession.id})`,
-      )
-      sourceSession.session?.stop()
-      sourceSession.promise
-        .then((session) => {
-          if (!sourceSession.ended && sourceSession.consumers === 0) {
-            session.stop()
-          }
-        })
-        .catch(() => {
-          // Startup errors are reported to the acquiring consumer.
-        })
-    }
-
-    try {
-      const streamingSession = await sourceSession.promise
-
-      if (released) {
-        throw getRecordingAbortError()
-      }
-
-      return {
-        streamingSession,
-        release,
-      }
-    } catch (e) {
-      release()
-      throw e
-    }
-  }
-
-  private createSourceSession(consumer: string) {
-    const sourceSession: ManagedSourceSession = {
-      id: this.nextSessionId++,
-      promise: undefined as unknown as Promise<StreamingSession>,
-      consumers: 0,
-      ended: false,
-    }
-
-    logInfo(`Starting Ring live source for ${this.ringCamera.name} (${consumer})`)
-
-    sourceSession.promise = this.ringCamera
-      .startLiveCall()
-      .then((session) => {
-        sourceSession.session = session
-
-        session.onCallEnded.pipe(take(1)).subscribe(() => {
-          sourceSession.ended = true
-
-          if (this.current === sourceSession) {
-            this.current = undefined
-          }
-
-          logDebug(
-            `Ring live source ended for ${this.ringCamera.name} (session=${sourceSession.id})`,
-          )
-        })
-
-        return session
-      })
-      .catch((e) => {
-        sourceSession.ended = true
-
-        if (this.current === sourceSession) {
-          this.current = undefined
-        }
-
-        throw e
-      })
-
-    this.current = sourceSession
-    return sourceSession
-  }
+function getLiveStreamAbortError() {
+  const error = new Error('Live stream stopped before activation completed')
+  error.name = 'AbortError'
+  return error
 }
 
 class StreamingSessionWrapper {
@@ -245,15 +123,16 @@ class StreamingSessionWrapper {
   private sourceSession
   private subscriptions = new Subscription()
   private stopped = false
+  private pipelineStops: Array<() => void> = []
 
   constructor(
-    sourceSession: SourceSessionLease,
+    sourceSession: MediaIngressLease,
     prepareStreamRequest: PrepareStreamRequest,
     ringCamera: RingCamera,
     start: number,
   ) {
     this.sourceSession = sourceSession
-    this.streamingSession = sourceSession.streamingSession
+    this.streamingSession = sourceSession.session
     this.prepareStreamRequest = prepareStreamRequest
     this.ringCamera = ringCamera
     this.start = start
@@ -364,6 +243,10 @@ class StreamingSessionWrapper {
   }
 
   async activate(request: StartStreamRequest) {
+    if (this.stopped) {
+      throw getLiveStreamAbortError()
+    }
+
     let sentVideo = false
     const {
         targetAddress,
@@ -374,7 +257,7 @@ class StreamingSessionWrapper {
 
     // Set up packet forwarding for video stream
     this.subscriptions.add(
-      this.streamingSession.onVideoRtp.subscribe(({ header, payload }) => {
+      this.sourceSession.subscribeVideo(({ header, payload }) => {
         header.ssrc = this.videoSsrc
         header.payloadType = request.video.pt
 
@@ -398,7 +281,7 @@ class StreamingSessionWrapper {
       }),
     )
 
-    const transcodingPromise = this.streamingSession.startTranscoding({
+    const transcoder = await this.sourceSession.createTranscoder({
       input: ['-vn'],
       audio: [
         '-acodec',
@@ -427,7 +310,15 @@ class StreamingSessionWrapper {
       ],
       video: false,
       output: [],
+      label: `Live Audio (${this.ringCamera.name})`,
     })
+
+    if (this.stopped) {
+      transcoder.stop()
+      throw getLiveStreamAbortError()
+    }
+
+    this.pipelineStops.push(() => transcoder.stop())
 
     let cameraSpeakerActive = false
     // used to send return audio from HomeKit to Ring
@@ -447,6 +338,7 @@ class StreamingSessionWrapper {
 
         return null
       }),
+      releaseReturnAudioFfmpeg = hksvRecordingQueue.trackFfmpegProcess(),
       returnAudioTranscoder = new ReturnAudioTranscoder({
         prepareStreamRequest: this.prepareStreamRequest,
         startStreamRequest: request,
@@ -476,6 +368,10 @@ class StreamingSessionWrapper {
           `rtp://127.0.0.1:${await returnAudioTranscodedSplitter.portPromise}`,
         ],
         ffmpegPath: getFfmpegPath(),
+        exitCallback: () => {
+          releaseReturnAudioFfmpeg()
+          this.stop()
+        },
         logger: {
           info: logDebug,
           error: logError,
@@ -487,11 +383,16 @@ class StreamingSessionWrapper {
     this.streamingSession.onCallEnded.pipe(take(1)).subscribe(() => {
       returnAudioTranscoder.stop()
       returnAudioTranscodedSplitter.close()
+      releaseReturnAudioFfmpeg()
+    })
+    this.pipelineStops.push(() => {
+      returnAudioTranscoder.stop()
+      returnAudioTranscodedSplitter.close()
+      releaseReturnAudioFfmpeg()
     })
 
     this.listenForAudioPackets(request)
     await returnAudioTranscoder.start()
-    await transcodingPromise
   }
 
   stop() {
@@ -501,6 +402,7 @@ class StreamingSessionWrapper {
 
     this.stopped = true
     this.subscriptions.unsubscribe()
+    this.pipelineStops.splice(0).forEach((stop) => stop())
     this.audioSplitter.close()
     this.transcodedAudioSplitter.close()
     this.videoSplitter.close()
@@ -516,7 +418,7 @@ export class CameraSource
   private cachedSnapshot?: Buffer
   private ringCamera
   private config: RingPlatformConfig
-  private sourceSessionManager
+  private mediaIngress
 
   private recordingActive = false
   private recordingConfiguration?: CameraRecordingConfiguration
@@ -527,15 +429,7 @@ export class CameraSource
   constructor(ringCamera: RingCamera, config: RingPlatformConfig) {
     this.ringCamera = ringCamera
     this.config = config
-    this.sourceSessionManager = new CameraSourceSessionManager(ringCamera)
-    hksvRecordingQueue.setConcurrency(
-      getIntegerConfigValue(
-        config.hksvMaxConcurrentRecordings,
-        getHksvPerformanceMode(config) === 'rpi' ? 1 : 2,
-        1,
-        4,
-      ),
-    )
+    this.mediaIngress = new RingMediaIngress(ringCamera)
 
     const enableHksv =
       config.enableHksv && !(config.disableHksvOnBattery && ringCamera.hasBattery)
@@ -584,8 +478,9 @@ export class CameraSource
     }
 
     if (enableHksv) {
-      const prebufferLength = Math.max(config.hksvPrebufferLengthMs ?? 4000, 4000),
-        fragmentLength = config.hksvFragmentLengthMs ?? 4000
+      const media = normalizeMediaConfig(config),
+        prebufferLength = media.recording.prebufferLengthMs,
+        fragmentLength = media.recording.fragmentLengthMs
 
       controllerOptions.recording = {
         delegate: this,
@@ -638,41 +533,21 @@ export class CameraSource
   }
 
   private getHksvVideoArguments(capabilities?: FfmpegCapabilities) {
-    const {
-        cameraVideoCodec,
-        hksvVideoCrf,
-        hksvVideoPreset = getHksvPerformanceMode(this.config) === 'rpi'
-          ? 'ultrafast'
-          : 'veryfast',
-      } = this.config,
+    const media = normalizeMediaConfig(this.config),
+      {
+        codec: cameraVideoCodec,
+        crf: hksvVideoCrf,
+        preset: hksvVideoPreset,
+        bitrateKbps,
+        maxBitrateKbps,
+        bufferSizeKbps,
+        rateControl,
+        keyframeInterval,
+      } = media.recording,
       selectedCodec = selectHksvVideoCodec(
         cameraVideoCodec,
         capabilities,
         this.config,
-      ),
-      bitrateKbps = getIntegerConfigValue(
-        this.config.hksvVideoBitrateKbps,
-        getHksvPerformanceMode(this.config) === 'rpi' ? 1000 : 3000,
-        256,
-        12000,
-      ),
-      maxBitrateKbps = getIntegerConfigValue(
-        this.config.hksvVideoMaxBitrateKbps,
-        bitrateKbps * 2,
-        bitrateKbps,
-        20000,
-      ),
-      bufferSizeKbps = getIntegerConfigValue(
-        this.config.hksvVideoBufferSizeKbps,
-        maxBitrateKbps * 2,
-        maxBitrateKbps,
-        40000,
-      ),
-      keyframeInterval = getIntegerConfigValue(
-        this.config.hksvVideoKeyframeInterval,
-        30,
-        5,
-        240,
       ),
       videoArguments = selectedCodec === 'copy'
         ? ['-vcodec', 'copy']
@@ -683,8 +558,17 @@ export class CameraSource
         selectedCodec,
         '-b:v',
         `${bitrateKbps}k`,
-        '-maxrate',
-        `${maxBitrateKbps}k`,
+        ...(rateControl === 'cbr'
+          ? [
+            '-minrate',
+            `${bitrateKbps}k`,
+            '-maxrate',
+            `${bitrateKbps}k`,
+          ]
+          : [
+            '-maxrate',
+            `${maxBitrateKbps}k`,
+          ]),
         '-bufsize',
         `${bufferSizeKbps}k`,
         '-pix_fmt',
@@ -713,7 +597,7 @@ export class CameraSource
         '0',
       )
 
-      if (Number.isFinite(hksvVideoCrf)) {
+      if (rateControl !== 'cbr' && Number.isFinite(hksvVideoCrf)) {
         videoArguments.push(
           '-crf',
           `${getIntegerConfigValue(hksvVideoCrf, 23, 18, 35)}`,
@@ -852,7 +736,7 @@ export class CameraSource
     logInfo(`Preparing Live Stream for ${this.ringCamera.name}`)
 
     try {
-      const sourceSession = await this.sourceSessionManager.acquire('live stream'),
+      const sourceSession = await this.mediaIngress.acquire('live stream'),
         session = new StreamingSessionWrapper(
           sourceSession,
           request,
@@ -981,15 +865,8 @@ export class CameraSource
 
     const fragmentLengthMs =
         this.recordingConfiguration.mediaContainerConfiguration.fragmentLength,
-      parser = new FragmentedMp4Parser(),
-      maxQueuedBytes = getIntegerConfigValue(
-        this.config.hksvMaxQueuedBytes,
-        getHksvPerformanceMode(this.config) === 'rpi'
-          ? 6 * 1024 * 1024
-          : 16 * 1024 * 1024,
-        1024 * 1024,
-        64 * 1024 * 1024,
-      ),
+      maxQueuedBytes = normalizeMediaConfig(this.config).recording.maxQueuedBytes,
+      parser = new FragmentedMp4Parser(maxQueuedBytes),
       start = Date.now()
 
     function wake() {
@@ -1007,6 +884,8 @@ export class CameraSource
       sentEndOfStream = false
     const queueAbortController = new AbortController()
     let stopActiveLiveCall: (() => void) | undefined
+    let recordingTranscoder: { stop(): void } | undefined
+    let updateQueuedBytes: ((bytes: number) => void) | undefined
 
     const closeSessionWithEndOfStream = (sendEndOfStream = true) => {
         if (closed) {
@@ -1018,6 +897,7 @@ export class CameraSource
         this.closedRecordingStreams.add(streamId)
         this.activeRecordingSessions.delete(streamId)
         queueAbortController.abort()
+        recordingTranscoder?.stop()
         stopActiveLiveCall?.()
         wake()
       },
@@ -1025,7 +905,12 @@ export class CameraSource
         closeSessionWithEndOfStream(false)
       },
       enqueuePacket = (packet: RecordingPacket) => {
+        if (closed) {
+          return
+        }
+
         queuedBytes += packet.data.length
+        updateQueuedBytes?.(queuedBytes)
 
         if (queuedBytes > maxQueuedBytes) {
           logInfo(
@@ -1042,7 +927,7 @@ export class CameraSource
     this.recordingWaiters.set(streamId, closeSession)
     this.activeRecordingSessions.set(streamId, closeSession)
 
-    let sourceSession: SourceSessionLease | undefined
+    let sourceSession: MediaIngressLease | undefined
     let liveCall: StreamingSession | undefined
     let keyFrameTimer: ReturnType<typeof setInterval> | undefined
     let maxRecordingTimer: ReturnType<typeof setTimeout> | undefined
@@ -1067,7 +952,13 @@ export class CameraSource
     }
 
     try {
-      releaseQueueSlot = await hksvRecordingQueue.acquire(queueAbortController.signal)
+      const queueLease = await hksvRecordingQueue.acquireLease({
+        signal: queueAbortController.signal,
+        cameraId: String(this.ringCamera.id),
+        timeoutMs: 30_000,
+      })
+      releaseQueueSlot = () => queueLease.release()
+      updateQueuedBytes = (bytes) => queueLease.setQueuedBytes(bytes)
       throwIfClosed()
 
       const capabilities = await getFfmpegCapabilities(),
@@ -1083,8 +974,8 @@ export class CameraSource
         `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
       )
 
-      sourceSession = await this.sourceSessionManager.acquire('HKSV recording')
-      liveCall = sourceSession.streamingSession
+      sourceSession = await this.mediaIngress.acquire('HKSV recording')
+      liveCall = sourceSession.session
       stopActiveLiveCall = () => sourceSession?.release()
       throwIfClosed()
       resetStallTimer()
@@ -1093,12 +984,8 @@ export class CameraSource
         closeSessionWithEndOfStream()
       })
 
-      const maxRecordingSeconds = getIntegerConfigValue(
-        this.config.hksvMaxRecordingSeconds,
-        60,
-        0,
-        300,
-      )
+      const maxRecordingSeconds =
+        normalizeMediaConfig(this.config).recording.maxDurationSeconds ?? 60
 
       if (maxRecordingSeconds) {
         maxRecordingTimer = setTimeout(() => {
@@ -1109,7 +996,8 @@ export class CameraSource
         }, maxRecordingSeconds * 1000)
       }
 
-      await liveCall.startTranscoding({
+      recordingTranscoder = await sourceSession.createTranscoder({
+        signal: queueAbortController.signal,
         video: videoArguments,
         output: [
           '-movflags',
@@ -1129,11 +1017,25 @@ export class CameraSource
             return
           }
 
-          for (const packet of parser.append(data)) {
-            resetStallTimer()
-            enqueuePacket(packet)
+          try {
+            for (const packet of parser.append(data)) {
+              if (closed) {
+                break
+              }
+
+              resetStallTimer()
+              enqueuePacket(packet)
+            }
+          } catch (error) {
+            logError(
+              `Failed to parse HKSV recording output for ${this.ringCamera.name} (streamId=${streamId})`,
+            )
+            logError(error)
+            closeSessionWithEndOfStream()
           }
         },
+        label: `HKSV Recording (${this.ringCamera.name})`,
+        onExit: () => closeSessionWithEndOfStream(),
       })
 
       liveCall.requestKeyFrame()
@@ -1160,6 +1062,7 @@ export class CameraSource
         if (packetQueue.length) {
           const packet = packetQueue.shift()!
           queuedBytes -= packet.data.length
+          updateQueuedBytes?.(queuedBytes)
 
           if (closed && shouldSendEndOfStream && !packetQueue.length) {
             packet.isLast = true
@@ -1211,7 +1114,9 @@ export class CameraSource
       }
 
       sourceSession?.release()
+      recordingTranscoder?.stop()
 
+      updateQueuedBytes?.(0)
       releaseQueueSlot?.()
     }
   }

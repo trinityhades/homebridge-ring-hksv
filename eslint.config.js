@@ -40,4 +40,10 @@ export default tseslint.config(
       'no-use-before-define': 'off',
     },
   },
+  {
+    files: ['scripts/**/*.mjs', 'test/**/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 )

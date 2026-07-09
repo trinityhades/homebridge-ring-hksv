@@ -45,6 +45,15 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | `debug` | Enables additional logging |
 | `disableLogs` | Disables plugin logging |
 
+## v15 media configuration
+
+v15 uses an adaptive media engine that keeps Ring call ownership separate from
+each live-view and recording FFmpeg process. Configure `media.profile` as
+`adaptive` (default), `lowPower`, or `quality`. Advanced overrides live in
+`media.recording`; they are strictly validated and take precedence over legacy
+`hksv*` fields, which remain compatibility aliases during migration. Set
+`media.recording.maxDurationSeconds` to `0` to disable its safety cap.
+
 ## Installation
 
 If Homebridge is installed globally:

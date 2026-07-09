@@ -53,6 +53,8 @@ import { UnknownZWaveSwitchSwitch } from './unknown-zwave-switch.ts'
 import { generateMacAddress } from './util.ts'
 import { Intercom } from './intercom.ts'
 import { Valve } from './valve.ts'
+import { normalizeMediaConfig } from './media-config.ts'
+import { configureHksvResourceGovernor } from './hksv-work-queue.ts'
 
 type WrappedRefreshToken = {
   rt?: string
@@ -298,6 +300,17 @@ export class RingPlatform implements DynamicPlatformPlugin {
 
     config.cameraStatusPollingSeconds = config.cameraStatusPollingSeconds ?? 20
     config.locationModePollingSeconds = config.locationModePollingSeconds ?? 20
+
+    // Media resources are platform-wide. Configure the singleton once before
+    // cameras are constructed; individual cameras must never overwrite it.
+    const media = normalizeMediaConfig(config)
+    configureHksvResourceGovernor({
+      recordingConcurrency: media.recording.maxConcurrentRecordings,
+      queueTimeoutMs: 30_000,
+    })
+    logInfo(
+      `Media profile ${media.profile}: recordingConcurrency=${media.recording.maxConcurrentRecordings}, codec=${media.recording.codec}`,
+    )
 
     if (enableRefreshOnPluginUpdate(api, config, this.pluginVersion)) {
       logInfo(

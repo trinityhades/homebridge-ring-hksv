@@ -43,6 +43,16 @@ export class FragmentedMp4Parser {
   private initSent = false
   private fragmentBoxes: Buffer[] = []
 
+  private readonly maxPendingBytes: number
+
+  constructor(maxPendingBytes = 16 * 1024 * 1024) {
+    if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes < 1) {
+      throw new Error('Fragmented MP4 maxPendingBytes must be a positive integer')
+    }
+
+    this.maxPendingBytes = maxPendingBytes
+  }
+
   get hasInitializationSegment() {
     return this.initSent
   }
@@ -102,6 +112,20 @@ export class FragmentedMp4Parser {
 
     if (consumed > 0) {
       this.pendingData = this.pendingData.subarray(consumed)
+    }
+
+    const retainedBytes =
+      this.pendingData.length +
+      this.initBoxes.reduce((total, box) => total + box.length, 0) +
+      this.fragmentBoxes.reduce((total, box) => total + box.length, 0)
+
+    if (retainedBytes > this.maxPendingBytes) {
+      // Complete fragments are emitted before this check. Only data that is
+      // still waiting for an MP4 boundary counts against the retained-data
+      // cap, so valid large `mdat` boxes are not rejected mid-stream.
+      throw new Error(
+        `Fragmented MP4 retained data exceeded ${this.maxPendingBytes} bytes`,
+      )
     }
 
     return packets
