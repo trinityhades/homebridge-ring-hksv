@@ -93,6 +93,12 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError'
 }
 
+function getRecordingAbortError() {
+  const error = new Error('HKSV recording request closed before startup completed')
+  error.name = 'AbortError'
+  return error
+}
+
 class StreamingSessionWrapper {
   audioSsrc = hap.CameraController.generateSynchronisationSource()
   videoSsrc = hap.CameraController.generateSynchronisationSource()
@@ -841,6 +847,12 @@ export class CameraSource
       waitForPacket = undefined
     }
 
+    function throwIfClosed() {
+      if (closed) {
+        throw getRecordingAbortError()
+      }
+    }
+
     let shouldSendEndOfStream = false,
       sentEndOfStream = false
     const queueAbortController = new AbortController()
@@ -883,10 +895,30 @@ export class CameraSource
     let liveCall: StreamingSession | undefined
     let keyFrameTimer: ReturnType<typeof setInterval> | undefined
     let maxRecordingTimer: ReturnType<typeof setTimeout> | undefined
+    let stallTimer: ReturnType<typeof setTimeout> | undefined
     let releaseQueueSlot: (() => void) | undefined
+    const stallTimeoutMs = Math.min(
+      Math.max(fragmentLengthMs * 3, 20_000),
+      60_000,
+    )
+
+    const resetStallTimer = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer)
+      }
+
+      stallTimer = setTimeout(() => {
+        logInfo(
+          `HKSV recording stream stalled for ${this.ringCamera.name} (streamId=${streamId}, timeoutMs=${stallTimeoutMs})`,
+        )
+        closeSessionWithEndOfStream()
+      }, stallTimeoutMs)
+    }
 
     try {
       releaseQueueSlot = await hksvRecordingQueue.acquire(queueAbortController.signal)
+      throwIfClosed()
+
       const capabilities = await getFfmpegCapabilities(),
         videoArguments = this.getHksvVideoArguments(capabilities),
         videoCodecIndex = videoArguments.indexOf('-vcodec'),
@@ -894,12 +926,16 @@ export class CameraSource
           ? String(videoArguments[videoCodecIndex + 1])
           : 'unknown'
 
+      throwIfClosed()
+
       logInfo(
         `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
       )
 
       liveCall = await this.ringCamera.startLiveCall()
       stopActiveLiveCall = () => liveCall?.stop()
+      throwIfClosed()
+      resetStallTimer()
 
       liveCall.onCallEnded.pipe(take(1)).subscribe(() => {
         closeSessionWithEndOfStream()
@@ -942,6 +978,7 @@ export class CameraSource
           }
 
           for (const packet of parser.append(data)) {
+            resetStallTimer()
             enqueuePacket(packet)
           }
         },
@@ -1015,6 +1052,10 @@ export class CameraSource
 
       if (maxRecordingTimer) {
         clearTimeout(maxRecordingTimer)
+      }
+
+      if (stallTimer) {
+        clearTimeout(stallTimer)
       }
 
       if (liveCall) {
