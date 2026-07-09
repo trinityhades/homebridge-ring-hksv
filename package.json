@@ -1,7 +1,7 @@
 {
   "name": "homebridge-ring-hksv",
   "displayName": "Homebridge Ring HKSV",
-  "version": "15.0.0-nightly.202607092250",
+  "version": "15.0.0",
   "description": "Homebridge plugin for Ring devices with HomeKit Secure Video support",
   "type": "module",
   "main": "./lib/index.js",

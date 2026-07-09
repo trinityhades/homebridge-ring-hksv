@@ -1,5 +1,13 @@
 # homebridge-ring-hksv
 
+## 15.0.0
+
+### Major Changes
+
+- Refactor the HKSV media pipeline around managed FFmpeg processes, shared media configuration, fragmented MP4 parsing, and a dedicated recording work queue for more reliable live streams and recordings.
+- Add new Ring media ingress and camera source handling to support the updated v15 recording and streaming flow.
+- Expand the plugin configuration and schema for the new media pipeline, and add regression coverage for the v15 media behavior.
+
 ## Unreleased
 
 - Add an HKSV recording stall watchdog so motion-triggered FFmpeg processes are stopped if they stop producing fragmented MP4 packets.
