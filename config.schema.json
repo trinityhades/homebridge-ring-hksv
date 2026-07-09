@@ -26,6 +26,105 @@
         "type": "boolean",
         "description": "Enables HomeKit Secure Video services for supported Ring cameras. This implementation is currently in-progress."
       },
+      "media": {
+        "title": "Media Engine (v15)",
+        "type": "object",
+        "description": "Adaptive media profile with optional validated recording overrides. This supersedes the legacy HKSV tuning fields.",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "default": "adaptive",
+            "oneOf": [
+              { "title": "adaptive", "enum": ["adaptive"] },
+              { "title": "lowPower", "enum": ["lowPower"] },
+              { "title": "quality", "enum": ["quality"] }
+            ]
+          },
+          "recording": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "codec": {
+                "type": "string",
+                "enum": ["auto", "copy", "libx264", "h264_v4l2m2m", "h264_videotoolbox"],
+                "description": "Preferred H.264 handling for recordings."
+              },
+              "bitrateKbps": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 12000,
+                "description": "Target video bitrate."
+              },
+              "maxBitrateKbps": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 20000,
+                "description": "Maximum burst video bitrate when using VBR."
+              },
+              "bufferSizeKbps": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 40000,
+                "description": "FFmpeg video rate-control buffer size."
+              },
+              "rateControl": {
+                "type": "string",
+                "enum": ["vbr", "cbr"],
+                "default": "vbr",
+                "description": "Use constrained variable bitrate or request constant bitrate. CBR ignores CRF."
+              },
+              "crf": {
+                "type": "integer",
+                "minimum": 18,
+                "maximum": 35,
+                "description": "Optional libx264 quality value for VBR recordings."
+              },
+              "preset": {
+                "type": "string",
+                "enum": ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"],
+                "description": "Optional libx264 speed/quality preset."
+              },
+              "keyframeInterval": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 240,
+                "description": "Maximum frames between keyframes."
+              },
+              "prebufferLengthMs": {
+                "type": "integer",
+                "minimum": 4000,
+                "maximum": 16000,
+                "description": "How much pre-event video HomeKit retains."
+              },
+              "fragmentLengthMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 8000,
+                "description": "Target fragmented MP4 duration."
+              },
+              "maxDurationSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 300,
+                "description": "Safety cap per recording stream; set 0 to disable the cap."
+              },
+              "maxQueuedBytes": {
+                "type": "integer",
+                "minimum": 1048576,
+                "maximum": 67108864,
+                "description": "Maximum per-recording buffered data."
+              },
+              "maxConcurrentRecordings": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4,
+                "description": "Maximum simultaneous recording pipelines."
+              }
+            }
+          }
+        }
+      },
       "forceRefreshRingPushCredentials": {
         "title": "Force Ring Push Credential Refresh",
         "type": "boolean",
@@ -35,6 +134,12 @@
         "title": "Force Ring API Session Refresh",
         "type": "boolean",
         "description": "Advanced recovery option: rotates the Ring API hardware/session identity and forces fresh push credentials on next startup. Try this when refreshing only Ring push credentials still leaves motion/button events delayed or missing. The option clears itself after the updated refresh token is saved."
+      },
+      "enableCameraMotionHistory": {
+        "title": "Enable Camera Motion History Fallback",
+        "type": "boolean",
+        "description": "If enabled, cameras can synthesize motion from recent Ring event history when live push notifications are missing or stale. Disable this if you only want motion triggered by Ring notifications.",
+        "default": true
       },
       "disableHksvOnBattery": {
         "title": "Disable HKSV On Battery Cameras",
@@ -59,9 +164,9 @@
       "hksvMaxRecordingSeconds": {
         "title": "HKSV Max Recording Seconds",
         "type": "integer",
-        "minimum": 5,
+        "minimum": 0,
         "maximum": 300,
-        "description": "Optional safety cap for a single HKSV recording stream duration."
+        "description": "Optional safety cap for a single HKSV recording stream duration. Set 0 to disable the cap."
       },
       "hksvPerformanceMode": {
         "title": "HKSV Performance Mode",
@@ -354,8 +459,10 @@
           "items": [
             "alarmOnEntryDelay",
             "enableHksv",
+            "media",
             "forceRefreshRingPushCredentials",
             "forceRefreshRingApiSession",
+            "enableCameraMotionHistory",
             "disableHksvOnBattery",
             "hksvVideoPreset",
             "cameraVideoCodec",

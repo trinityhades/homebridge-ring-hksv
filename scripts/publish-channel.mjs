@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -44,7 +43,7 @@ function getNextStableBase(version) {
   return {
     major: parsed.major,
     minor: parsed.minor,
-    patch: parsed.patch + 1,
+    patch: parsed.patch,
   }
 }
 

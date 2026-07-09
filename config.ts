@@ -4,6 +4,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import type { API } from 'homebridge'
 import { createHash, randomBytes } from 'crypto'
 import { join } from 'path'
+import type {
+  HksvVideoCodec,
+  MediaConfigInput,
+} from './media-config.ts'
 
 const systemIdFileName = '.ring.json'
 export const controlCenterDisplayName = 'homebridge-ring-hksv'
@@ -13,6 +17,8 @@ export interface RingPlatformConfig extends RingApiOptions {
   enableHksv?: boolean
   forceRefreshRingPushCredentials?: boolean
   forceRefreshRingApiSession?: boolean
+  enableCameraMotionHistory?: boolean
+  lastKnownPluginVersion?: string
   disableHksvOnBattery?: boolean
   hksvPrebufferLengthMs?: number
   hksvFragmentLengthMs?: number
@@ -35,13 +41,13 @@ export interface RingPlatformConfig extends RingApiOptions {
     | 'slow'
     | 'slower'
     | 'veryslow'
+  /**
+   * v15 media configuration. Values in media.recording take precedence over
+   * profile defaults and legacy HKSV tuning fields.
+   */
+  media?: MediaConfigInput
   homeKitAccessoryTag?: string
-  cameraVideoCodec?:
-    | 'auto'
-    | 'copy'
-    | 'h264_v4l2m2m'
-    | 'h264_videotoolbox'
-    | 'libx264'
+  cameraVideoCodec?: HksvVideoCodec
   beamDurationSeconds?: number
   ffmpegPath?: string
   hideLightGroups?: boolean
@@ -78,6 +84,27 @@ export function updateHomebridgeConfig(
   }
 
   return false
+}
+
+export function getPluginVersion() {
+  for (const packageJsonUrl of [
+    new URL('./package.json', import.meta.url),
+    new URL('../package.json', import.meta.url),
+  ]) {
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(packageJsonUrl).toString(),
+      ) as { version?: string }
+
+      if (packageJson.version) {
+        return packageJson.version
+      }
+    } catch {
+      // keep trying candidate paths
+    }
+  }
+
+  return 'unknown'
 }
 
 function createSystemId() {

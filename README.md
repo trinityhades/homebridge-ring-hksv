@@ -27,6 +27,7 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | Option | Purpose |
 | --- | --- |
 | `enableHksv` | Enables experimental HKSV support for eligible cameras |
+| `enableCameraMotionHistory` | Allows camera motion to fall back to recent Ring event history if live notifications are stale; disable to only trust push-triggered motion |
 | `disableHksvOnBattery` | Disables HKSV on battery cameras to reduce battery/network usage |
 | `hksvPrebufferLengthMs` | HKSV prebuffer duration (minimum 4000ms) |
 | `hksvFragmentLengthMs` | HKSV fragment duration target |
@@ -43,6 +44,15 @@ Big thanks to Dustin and all upstream contributors. This fork reuses and extends
 | `ffmpegPath` | Override FFmpeg binary path |
 | `debug` | Enables additional logging |
 | `disableLogs` | Disables plugin logging |
+
+## v15 media configuration
+
+v15 uses an adaptive media engine that keeps Ring call ownership separate from
+each live-view and recording FFmpeg process. Configure `media.profile` as
+`adaptive` (default), `lowPower`, or `quality`. Advanced overrides live in
+`media.recording`; they are strictly validated and take precedence over legacy
+`hksv*` fields, which remain compatibility aliases during migration. Set
+`media.recording.maxDurationSeconds` to `0` to disable its safety cap.
 
 ## Installation
 

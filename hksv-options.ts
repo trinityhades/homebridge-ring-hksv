@@ -1,19 +1,19 @@
 import type { RingPlatformConfig } from './config.ts'
 import type { FfmpegCapabilities } from './ffmpeg-capabilities.ts'
+import {
+  getLegacyHksvPerformanceMode,
+  normalizeMediaConfig,
+  type HksvVideoCodec,
+} from './media-config.ts'
 
-export type HksvVideoCodec =
-  | 'auto'
-  | 'copy'
-  | 'libx264'
-  | 'h264_v4l2m2m'
-  | 'h264_videotoolbox'
+export type { HksvVideoCodec } from './media-config.ts'
 
 export function getHksvPerformanceMode(config: RingPlatformConfig) {
-  return config.hksvPerformanceMode ?? 'balanced'
+  return getLegacyHksvPerformanceMode(config)
 }
 
 export function getHksvRecordingResolutions(config: RingPlatformConfig) {
-  if (getHksvPerformanceMode(config) === 'rpi') {
+  if (normalizeMediaConfig(config).profile === 'lowPower') {
     return [
       [1280, 720, 30],
       [640, 480, 30],
@@ -35,13 +35,14 @@ export function selectHksvVideoCodec(
   capabilities: FfmpegCapabilities | undefined,
   config: RingPlatformConfig,
 ): HksvVideoCodec {
-  const codec = configuredCodec ?? 'auto'
+  const media = normalizeMediaConfig(config)
+  const codec = configuredCodec ?? media.recording.codec
 
   if (codec !== 'auto') {
     return codec
   }
 
-  if (getHksvPerformanceMode(config) === 'rpi') {
+  if (media.profile === 'lowPower') {
     return 'copy'
   }
 
