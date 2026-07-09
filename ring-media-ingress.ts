@@ -1,4 +1,8 @@
-import { FfmpegProcess, reservePorts, RtpSplitter } from '@homebridge/camera-utils'
+import {
+  defaultFfmpegPath,
+  reservePorts,
+  RtpSplitter,
+} from '@homebridge/camera-utils'
 import type { RingCamera } from 'ring-client-api'
 import { getFfmpegPath } from 'ring-client-api/ffmpeg'
 import type { StreamingSession } from 'ring-client-api/streaming/streaming-session'
@@ -7,6 +11,7 @@ import { Subscription } from 'rxjs'
 import { take } from 'rxjs/operators'
 import { RtpPacket } from 'werift'
 import { hksvRecordingQueue } from './hksv-work-queue.ts'
+import { ManagedFfmpegProcess } from './managed-ffmpeg-process.ts'
 
 /**
  * A camera-local owner for a Ring call.  ring-client-api's startTranscoding()
@@ -43,6 +48,8 @@ export interface IngressTranscoderOptions {
 
 export interface IngressTranscoder {
   stop(): void
+  /** Resolves only after the owned FFmpeg child has actually exited. */
+  readonly exited: Promise<void>
 }
 
 interface ActiveCall {
@@ -74,6 +81,34 @@ function getAbortError() {
   const error = new Error('Ring media transcoder startup was aborted')
   error.name = 'AbortError'
   return error
+}
+
+function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSignal) {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(getAbortError())
+
+  return new Promise<T>((resolve, reject) => {
+    let onAbort: () => void = () => undefined
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    onAbort = () => {
+      cleanup()
+      reject(getAbortError())
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      },
+    )
+
+    if (signal.aborted) onAbort()
+  })
 }
 
 function waitForSdp(
@@ -136,7 +171,14 @@ export class RingMediaIngress {
     this.idleGraceMs = idleGraceMs
   }
 
-  async acquire(consumer: string): Promise<MediaIngressLease> {
+  async acquire(
+    consumer: string,
+    signal?: AbortSignal,
+  ): Promise<MediaIngressLease> {
+    if (signal?.aborted) {
+      throw getAbortError()
+    }
+
     if (this.idleTimer) {
       clearTimeout(this.idleTimer)
       this.idleTimer = undefined
@@ -150,7 +192,7 @@ export class RingMediaIngress {
     call.leases++
 
     try {
-      const session = await call.promise
+      const session = await waitForAbortablePromise(call.promise, signal)
       if (call.ended) {
         throw new Error('Ring media ingress ended before it could be acquired')
       }
@@ -255,17 +297,21 @@ export class RingMediaIngress {
     const audioSplitter = new RtpSplitter()
     const videoSplitter = options.video === false ? undefined : new RtpSplitter()
     const subscriptions = new Subscription()
-    let process: FfmpegProcess | undefined
+    let ffmpeg: ManagedFfmpegProcess | undefined
     let releaseFfmpeg: (() => void) | undefined
     let stopped = false
+    const releaseFfmpegResource = () => {
+      releaseFfmpeg?.()
+      releaseFfmpeg = undefined
+    }
     const stop = () => {
       if (stopped) return
       stopped = true
       subscriptions.unsubscribe()
       audioSplitter.close()
       videoSplitter?.close()
-      process?.stop()
-      releaseFfmpeg?.()
+      ffmpeg?.stop()
+      if (!ffmpeg) releaseFfmpegResource()
     }
 
     try {
@@ -311,8 +357,8 @@ export class RingMediaIngress {
         throw getAbortError()
       }
       releaseFfmpeg = hksvRecordingQueue.trackFfmpegProcess()
-      process = new FfmpegProcess({
-        ffmpegPath: getFfmpegPath(),
+      ffmpeg = new ManagedFfmpegProcess({
+        ffmpegPath: getFfmpegPath() || defaultFfmpegPath,
         ffmpegArgs: [
           '-hide_banner', '-protocol_whitelist', 'pipe,udp,rtp,file,crypto',
           ...(usingOpus ? ['-acodec', 'libopus'] : []),
@@ -323,6 +369,7 @@ export class RingMediaIngress {
         ],
         stdoutCallback: options.stdoutCallback,
         exitCallback: () => {
+          releaseFfmpegResource()
           stop()
           options.onExit?.()
         },
@@ -331,11 +378,12 @@ export class RingMediaIngress {
       })
       subscriptions.add(session.onCallEnded.pipe(take(1)).subscribe(stop))
       if (stopped) {
+        ffmpeg.stop()
         throw new Error('Ring call ended before the media transcoder started')
       }
-      process.writeStdin(inputSdp)
+      ffmpeg.writeStdin(inputSdp)
       session.requestKeyFrame()
-      return { stop }
+      return { stop, exited: ffmpeg.exited }
     } catch (error) {
       stop()
       throw error

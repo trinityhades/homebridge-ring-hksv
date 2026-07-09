@@ -53,7 +53,11 @@ import {
   selectHksvVideoCodec,
 } from './hksv-options.ts'
 import { hksvRecordingQueue } from './hksv-work-queue.ts'
-import { RingMediaIngress, type MediaIngressLease } from './ring-media-ingress.ts'
+import {
+  RingMediaIngress,
+  type IngressTranscoder,
+  type MediaIngressLease,
+} from './ring-media-ingress.ts'
 import { normalizeMediaConfig } from './media-config.ts'
 
 const __dirname = new URL('.', import.meta.url).pathname,
@@ -846,6 +850,7 @@ export class CameraSource
 
   async *handleRecordingStreamRequest(
     streamId: number,
+    signal?: AbortSignal,
   ): AsyncGenerator<RecordingPacket> {
     logInfo(`HKSV recording stream requested for ${this.ringCamera.name} (streamId=${streamId})`)
 
@@ -884,7 +889,7 @@ export class CameraSource
       sentEndOfStream = false
     const queueAbortController = new AbortController()
     let stopActiveLiveCall: (() => void) | undefined
-    let recordingTranscoder: { stop(): void } | undefined
+    let recordingTranscoder: IngressTranscoder | undefined
     let updateQueuedBytes: ((bytes: number) => void) | undefined
 
     const closeSessionWithEndOfStream = (sendEndOfStream = true) => {
@@ -896,6 +901,13 @@ export class CameraSource
         closed = true
         this.closedRecordingStreams.add(streamId)
         this.activeRecordingSessions.delete(streamId)
+        if (!sendEndOfStream) {
+          // HomeKit has already closed this stream. Do not keep yielding
+          // buffered fragments while its AsyncGenerator cancellation unwinds.
+          packetQueue.length = 0
+          queuedBytes = 0
+          updateQueuedBytes?.(0)
+        }
         queueAbortController.abort()
         recordingTranscoder?.stop()
         stopActiveLiveCall?.()
@@ -923,6 +935,12 @@ export class CameraSource
         packetQueue.push(packet)
         wake()
       }
+
+    const abortRecordingStream = () => closeSession()
+    signal?.addEventListener('abort', abortRecordingStream, { once: true })
+    if (signal?.aborted) {
+      abortRecordingStream()
+    }
 
     this.recordingWaiters.set(streamId, closeSession)
     this.activeRecordingSessions.set(streamId, closeSession)
@@ -974,7 +992,10 @@ export class CameraSource
         `Starting HKSV recording pipeline for ${this.ringCamera.name} (streamId=${streamId}, mode=${getHksvPerformanceMode(this.config)}, video=${selectedVideoCodec})`,
       )
 
-      sourceSession = await this.mediaIngress.acquire('HKSV recording')
+      sourceSession = await this.mediaIngress.acquire(
+        'HKSV recording',
+        queueAbortController.signal,
+      )
       liveCall = sourceSession.session
       stopActiveLiveCall = () => sourceSession?.release()
       throwIfClosed()
@@ -1113,8 +1134,10 @@ export class CameraSource
         clearTimeout(stallTimer)
       }
 
+      signal?.removeEventListener('abort', abortRecordingStream)
       sourceSession?.release()
       recordingTranscoder?.stop()
+      await recordingTranscoder?.exited
 
       updateQueuedBytes?.(0)
       releaseQueueSlot?.()

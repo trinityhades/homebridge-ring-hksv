@@ -4,9 +4,11 @@ import type { RingCamera } from 'ring-client-api'
 import { BaseDataAccessory } from './base-data-accessory.ts'
 import {
   catchError,
+  exhaustMap,
   filter,
   map,
   mergeMap,
+  share,
   switchMap,
   throttleTime,
 } from 'rxjs/operators'
@@ -14,7 +16,7 @@ import { CameraSource } from './camera-source.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { TargetValueTimer } from './target-value-timer.ts'
 import { delay, logError, logInfo } from 'ring-client-api/util'
-import { concat, EMPTY, firstValueFrom, from, merge, of, timer } from 'rxjs'
+import { EMPTY, firstValueFrom, from, merge, of, timer } from 'rxjs'
 import type { Observable } from 'rxjs'
 
 export class Camera extends BaseDataAccessory<RingCamera> {
@@ -229,16 +231,25 @@ export class Camera extends BaseDataAccessory<RingCamera> {
       seenEventIds = new Set<string>(),
       pushMotionEvents = this.device.onMotionDetected,
       enableMotionHistoryFallback =
-        this.config.enableCameraMotionHistory !== false,
-      polledMotionEvents = timer(pollSeconds * 1000, pollSeconds * 1000).pipe(
-        switchMap(() =>
-          from(
+        this.config.enableCameraMotionHistory !== false
+    let historyFailureCount = 0
+    let nextHistoryPollAt = 0
+    const baseHistoryRetryMs = Math.max(pollSeconds * 1000, 30_000),
+      polledNewMotionEvents = timer(pollSeconds * 1000, pollSeconds * 1000).pipe(
+        exhaustMap(() => {
+          if (Date.now() < nextHistoryPollAt) {
+            return EMPTY
+          }
+
+          return from(
             this.device.getEvents({
               limit: 10,
               kind: 'motion',
             }),
           ).pipe(
             mergeMap(({ events }) => {
+              historyFailureCount = 0
+              nextHistoryPollAt = 0
               const newMotionEvents = events
                 .filter((event) => {
                   const eventId = event.ding_id_str || String(event.ding_id)
@@ -258,27 +269,35 @@ export class Camera extends BaseDataAccessory<RingCamera> {
                 seenEventIds.add(event.ding_id_str || String(event.ding_id))
               })
 
-              if (!newMotionEvents.length) {
-                return EMPTY
-              }
+              if (!newMotionEvents.length) return EMPTY
 
               logInfo(
                 `${this.device.name} Detected Motion from Ring event history fallback`,
               )
-
-              return concat(
-                of(true),
-                timer(65000).pipe(map(() => false)),
-              )
+              return of(true)
             }),
-            catchError((error) => {
-              logError(
-                `${this.device.name} Failed to poll Ring event history for motion fallback`,
+            catchError(() => {
+              historyFailureCount++
+              const retryDelayMs = Math.min(
+                5 * 60 * 1000,
+                baseHistoryRetryMs * 2 ** Math.min(historyFailureCount - 1, 4),
               )
-              logError(error)
+              nextHistoryPollAt = Date.now() + retryDelayMs
+              logError(
+                `${this.device.name} failed to poll Ring event history for motion fallback; retrying in ${Math.ceil(retryDelayMs / 1000)} seconds`,
+              )
               return EMPTY
             }),
-          ),
+          )
+        }),
+        // The false timer below has a second subscriber. Sharing keeps one
+        // history request per poll instead of duplicating Ring API traffic.
+        share(),
+      ),
+      polledMotionEvents = merge(
+        polledNewMotionEvents,
+        polledNewMotionEvents.pipe(
+          switchMap(() => timer(65000).pipe(map(() => false))),
         ),
       )
 

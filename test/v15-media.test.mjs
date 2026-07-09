@@ -5,6 +5,7 @@ import { ReplaySubject, Subject } from 'rxjs'
 import { CameraSource } from '../lib/camera-source.js'
 import { FragmentedMp4Parser } from '../lib/fragmented-mp4-parser.js'
 import { ResourceGovernor } from '../lib/hksv-work-queue.js'
+import { ManagedFfmpegProcess } from '../lib/managed-ffmpeg-process.js'
 import { normalizeMediaConfig } from '../lib/media-config.js'
 import { RingMediaIngress } from '../lib/ring-media-ingress.js'
 
@@ -35,6 +36,46 @@ function fakeSession() {
       return didStop
     },
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function within(promise, timeoutMs) {
+  return Promise.race([
+    promise,
+    delay(timeoutMs).then(() => {
+      throw new Error(`timed out after ${timeoutMs}ms`)
+    }),
+  ])
+}
+
+function startManagedNodeChild({ ignoreTerm, stopGraceMs }) {
+  let markReady
+  let markExited
+  const ready = new Promise((resolve) => { markReady = resolve })
+  const exit = new Promise((resolve) => { markExited = resolve })
+  const ffmpeg = new ManagedFfmpegProcess({
+    ffmpegPath: process.execPath,
+    ffmpegArgs: [
+      '-e',
+      [
+        "process.stdout.write('ready\\n')",
+        ignoreTerm ? "process.on('SIGTERM', () => {})" : '',
+        'setInterval(() => {}, 1000)',
+      ].filter(Boolean).join(';'),
+    ],
+    logLabel: 'test child',
+    logger: { error() {}, info() {} },
+    stopGraceMs,
+    stdoutCallback: (data) => {
+      if (data.toString().includes('ready')) markReady()
+    },
+    exitCallback: (code, signal) => markExited({ code, signal }),
+  })
+
+  return { ffmpeg, ready, exit }
 }
 
 test('normalizes v15 media settings while preserving legacy HKSV semantics', () => {
@@ -140,6 +181,69 @@ test('cancels unanswered or disposed Ring media ingress startup', async () => {
 
   await assert.rejects(pendingAcquire, /ended before it could be acquired/)
   assert.equal(lateSession.didStop, true)
+
+  let resolveAbortableCall
+  const delayedSession = fakeSession()
+  const abortableIngress = new RingMediaIngress({
+    name: 'abortable acquire camera',
+    startLiveCall: () => new Promise((resolve) => { resolveAbortableCall = resolve }),
+  }, 0)
+  const acquireAbortController = new AbortController()
+  const abortedAcquire = abortableIngress.acquire('test', acquireAbortController.signal)
+  acquireAbortController.abort()
+  await assert.rejects(abortedAcquire, { name: 'AbortError' })
+  resolveAbortableCall(delayedSession)
+  await within(delay(0), 1_000)
+  assert.equal(delayedSession.didStop, true)
+})
+
+test('honors Homebridge recording cancellation before pipeline startup', async () => {
+  const source = Object.create(CameraSource.prototype)
+  source.ringCamera = { id: 'test-camera', name: 'test camera' }
+  source.config = {}
+  source.recordingActive = true
+  source.recordingConfiguration = {
+    mediaContainerConfiguration: { fragmentLength: 4_000 },
+  }
+  source.closedRecordingStreams = new Set()
+  source.recordingWaiters = new Map()
+  source.activeRecordingSessions = new Map()
+
+  const abortController = new AbortController()
+  abortController.abort()
+  const generator = source.handleRecordingStreamRequest(1, abortController.signal)
+
+  assert.equal((await within(generator.next(), 1_000)).done, true)
+  assert.equal(source.activeRecordingSessions.size, 0)
+  assert.equal(source.recordingWaiters.size, 0)
+})
+
+test('escalates a non-terminating FFmpeg child without killing a normal child', async () => {
+  const stuck = startManagedNodeChild({ ignoreTerm: true, stopGraceMs: 25 })
+  try {
+    await within(stuck.ready, 1_000)
+    stuck.ffmpeg.stop()
+    assert.deepEqual(await within(stuck.exit, 1_000), {
+      code: null,
+      signal: 'SIGKILL',
+    })
+  } finally {
+    stuck.ffmpeg.forceStop()
+    await within(stuck.ffmpeg.exited, 1_000)
+  }
+
+  const normal = startManagedNodeChild({ ignoreTerm: false, stopGraceMs: 200 })
+  try {
+    await within(normal.ready, 1_000)
+    normal.ffmpeg.stop()
+    assert.deepEqual(await within(normal.exit, 1_000), {
+      code: null,
+      signal: 'SIGTERM',
+    })
+  } finally {
+    normal.ffmpeg.forceStop()
+    await within(normal.ffmpeg.exited, 1_000)
+  }
 })
 
 test('exposes all media recording controls and applies CBR arguments', async () => {
