@@ -1,14 +1,136 @@
 import type { RingIntercom } from 'ring-client-api'
+import { RingCamera } from 'ring-client-api'
 import { hap } from './hap.ts'
 import type { RingPlatformConfig } from './config.ts'
 import type { PlatformAccessory } from 'homebridge'
 import { BaseDataAccessory } from './base-data-accessory.ts'
 import { logError, logInfo } from 'ring-client-api/util'
-import { map, throttleTime } from 'rxjs/operators'
+import { filter, map, share, switchMap, throttleTime } from 'rxjs/operators'
+import { interval, merge, Subject } from 'rxjs'
+import { CameraSource } from './camera-source.ts'
+
+/**
+ * Creates a RingCamera-compatible proxy for a Ring Intercom Video device.
+ * Ring Intercom Video is classified as RingIntercom by ring-client-api but has a
+ * real camera. We use Object.create(RingCamera.prototype) so that startLiveCall()
+ * and createStreamingConnection() are inherited and work with the intercom's
+ * restClient and device id (Ring's signalling server uses the same doorbot_id
+ * scheme for video intercoms as for cameras).
+ */
+function createIntercomVideoProxy(device: RingIntercom): RingCamera {
+  const proxy = Object.create(RingCamera.prototype) as RingCamera
+
+  // RingCamera defines several properties (e.g. `name`, `id`) as getter-only on its
+  // prototype. Object.assign would try to set them via the prototype setter and throw.
+  // Object.defineProperty defines own properties directly on the proxy instance,
+  // shadowing the prototype getters without triggering them.
+  const define = (key: string, value: unknown) =>
+    Object.defineProperty(proxy, key, {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    })
+
+  define('id', device.id)
+  define('name', device.name)
+  define('deviceType', device.deviceType)
+  define('data', {
+    kind: device.deviceType,
+    device_id: String(device.id),
+    settings: {
+      live_view_disabled: false,
+      motion_detection_enabled: true,
+    },
+    metadata: {},
+  })
+  // restClient is technically private in TypeScript but public in compiled JS
+  define('restClient', (device as any).restClient)
+  define('isRingEdgeEnabled', false)
+  define('hasBattery', device.batteryLevel !== null)
+  define('isOffline', device.isOffline)
+  define('snapshotsAreBlocked', false)
+  define('hasSnapshotWithinLifetime', false)
+  define('snapshotLifeTime', 55000) // camera stays active ~1 min after a ring
+  define('canTakeSnapshotWhileRecording', false)
+  define('latestNotificationSnapshotUuid', undefined)
+  define('onNewNotification', new Subject<never>())
+  define('onMotionDetected', new Subject<boolean>())
+  define('onDoorbellPressed', device.onDing)
+  define('onBatteryLevel', device.onBatteryLevel)
+  define('onInHomeDoorbellStatus', new Subject<boolean | undefined>())
+  define('hasLowBattery', false)
+  define('isCharging', false)
+  define('isDoorbot', true)
+  define('hasLight', false)
+  define('hasSiren', false)
+  define('hasInHomeDoorbell', false)
+  define('model', 'Ring Intercom Video')
+  // Pre-warm support: start the WebRTC call the moment a ding is detected so
+  // the camera is already streaming when HKSV requests the recording.
+  let preWarmedCall: Promise<any> | null = null
+  let preWarmCleanup: ReturnType<typeof setTimeout> | null = null
+
+  const realStartLiveCall = () =>
+    (RingCamera.prototype.startLiveCall as any).call(proxy)
+
+  define('startLiveCall', () => {
+    if (preWarmedCall) {
+      const call = preWarmedCall
+      preWarmedCall = null
+      if (preWarmCleanup) {
+        clearTimeout(preWarmCleanup)
+        preWarmCleanup = null
+      }
+      logInfo(`${device.name}: using pre-warmed camera session for recording`)
+      return call
+    }
+    return realStartLiveCall()
+  })
+
+  define('preWarmCamera', () => {
+    if (preWarmedCall) return
+    logInfo(`${device.name}: pre-warming camera connection`)
+    preWarmedCall = realStartLiveCall()
+    // Clean up if HKSV doesn't claim it within 20 seconds
+    preWarmCleanup = setTimeout(async () => {
+      if (preWarmedCall) {
+        try {
+          const session = await preWarmedCall
+          session.stop()
+        } catch {}
+        preWarmedCall = null
+        preWarmCleanup = null
+      }
+    }, 20000)
+  })
+
+  // Override getSnapshot: intercom uses the same doorbots snapshot endpoint as cameras.
+  // After a successful fetch, mark hasSnapshotWithinLifetime=true so CameraSource
+  // doesn't fire a redundant reload on every HomeKit snapshot request.
+  define('getSnapshot', async (_options?: { uuid?: string }) => {
+    try {
+      const snapshot = await (device as any).restClient.request({
+        url: (device as any).doorbotUrl('snapshot'),
+        responseType: 'buffer',
+      })
+      ;(proxy as any).hasSnapshotWithinLifetime = true
+      setTimeout(() => {
+        ;(proxy as any).hasSnapshotWithinLifetime = false
+      }, proxy.snapshotLifeTime)
+      return snapshot
+    } catch {
+      throw new Error(`Snapshot not available for ${device.name}`)
+    }
+  })
+
+  return proxy
+}
 
 export class Intercom extends BaseDataAccessory<RingIntercom> {
   private unlocking = false
   private unlockTimeout?: ReturnType<typeof setTimeout>
+  private autoOpen = false
 
   public readonly device
   public readonly accessory
@@ -26,15 +148,77 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
     this.config = config
 
     const { Characteristic, Service } = hap,
-      lockService = this.getService(Service.LockMechanism),
+      isIntercomVideo = device.deviceType === 'intercom_handset_video'
+
+    // Set up camera streaming for Ring Intercom Video before other services
+    let intercomVideoProxy: RingCamera | null = null
+    if (isIntercomVideo) {
+      const cameraProxy = createIntercomVideoProxy(device)
+      intercomVideoProxy = cameraProxy
+      const cameraSource = new CameraSource(cameraProxy, config)
+      accessory.configureController(cameraSource.controller)
+
+      this.registerCharacteristic({
+        characteristicType: Characteristic.Mute,
+        serviceType: Service.Microphone,
+        getValue: () => false,
+      })
+
+      this.registerCharacteristic({
+        characteristicType: Characteristic.Mute,
+        serviceType: Service.Speaker,
+        getValue: () => false,
+      })
+
+      logInfo(`Camera streaming enabled for Ring Intercom Video: ${device.name}`)
+    }
+
+    const lockService = this.getService(Service.LockMechanism),
       { LockCurrentState, LockTargetState, ProgrammableSwitchEvent } =
         Characteristic,
-      programableSwitchService = this.getService(
-        Service.StatelessProgrammableSwitch,
-      ),
-      onDoorbellPressed = device.onDing.pipe(
-        throttleTime(15000),
-        map(() => ProgrammableSwitchEvent.SINGLE_PRESS),
+      // Ring Intercom Video ding events may arrive as camera-style FCM push
+      // notifications (different category than RingIntercom.onDing expects),
+      // so onDing never fires. Poll Ring's active-dings endpoint as a reliable
+      // fallback — it reflects the current ring in real time (unlike the history
+      // endpoint which can lag by ~60 seconds).
+      onDingDetected = (() => {
+        let lastDingId: string | undefined
+
+        const polled = interval(3000).pipe(
+          switchMap(async () => {
+            try {
+              const active: any[] = await (device as any).restClient.request({
+                url: 'https://api.ring.com/clients_api/dings/active',
+              })
+              return Array.isArray(active) ? active : []
+            } catch {
+              return []
+            }
+          }),
+          filter((active: any[]) => {
+            const ding = active.find(
+              (d) =>
+                String(d.doorbot_id) === String(device.id) &&
+                d.kind === 'ding',
+            )
+            if (!ding) return false
+            if (String(ding.id) === lastDingId) return false
+            lastDingId = String(ding.id)
+            return true
+          }),
+          map(() => undefined as void),
+        )
+
+        // share() makes this hot: one polling interval, one lastDingId,
+        // emission fans out to all subscribers (doorbell service + auto-open)
+        return merge(device.onDing, polled).pipe(share())
+      })(),
+      onDoorbellPressed = onDingDetected.pipe(
+        throttleTime(3000),
+        map(() => {
+          logInfo(`Doorbell pressed on ${device.name} — sending HomeKit event`)
+          return ProgrammableSwitchEvent.SINGLE_PRESS
+        }),
       ),
       syncLockState = () => {
         const state = this.getLockState()
@@ -98,7 +282,47 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
         }
       },
     })
-    lockService.setPrimaryService(true)
+    // For audio-only intercom the lock is the main function; for video intercom
+    // the camera controller owns the primary-service role so HomeKit routes
+    // doorbell events (and HomePod chimes) correctly.
+    if (!isIntercomVideo) {
+      lockService.setPrimaryService(true)
+    }
+
+    // Auto-Open Switch — when on, automatically unlocks the door on every ring
+    this.registerCharacteristic({
+      characteristicType: Characteristic.On,
+      serviceType: Service.Switch,
+      serviceSubType: 'AutoOpen',
+      name: device.name + ' Auto Open',
+      getValue: () => this.autoOpen,
+      setValue: (value: boolean) => {
+        this.autoOpen = value
+        logInfo(`${device.name} auto-open ${value ? 'enabled' : 'disabled'}`)
+      },
+    })
+
+    onDingDetected.pipe(throttleTime(15000)).subscribe(() => {
+      if (this.autoOpen) {
+        logInfo(`Auto-opening ${device.name}`)
+        device
+          .unlock()
+          .then((response) =>
+            logInfo(`Auto-open unlock response: ${JSON.stringify(response)}`),
+          )
+          .catch(logError)
+        markAsUnlocked()
+      }
+    })
+
+    // Pre-warm the camera WebRTC connection on every ding so HKSV recording
+    // gets live video instead of black frames.
+    if (intercomVideoProxy) {
+      const proxy = intercomVideoProxy
+      onDingDetected.subscribe(() => {
+        ;(proxy as any).preWarmCamera?.()
+      })
+    }
 
     // Doorbell Service
     this.registerObservableCharacteristic({
@@ -107,19 +331,23 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
       onValue: onDoorbellPressed,
     })
 
-    // Programmable Switch Service
-    this.registerObservableCharacteristic({
-      characteristicType: ProgrammableSwitchEvent,
-      serviceType: programableSwitchService,
-      onValue: onDoorbellPressed,
-    })
-
-    // Hide long and double press events by setting max value
-    programableSwitchService
-      .getCharacteristic(ProgrammableSwitchEvent)
-      .setProps({
-        maxValue: ProgrammableSwitchEvent.SINGLE_PRESS,
+    // Programmable Switch Service — only for audio-only intercom; the video
+    // variant already exposes Service.Doorbell which covers this.
+    if (!isIntercomVideo) {
+      const programableSwitchService = this.getService(
+        Service.StatelessProgrammableSwitch,
+      )
+      this.registerObservableCharacteristic({
+        characteristicType: ProgrammableSwitchEvent,
+        serviceType: programableSwitchService,
+        onValue: onDoorbellPressed,
       })
+      programableSwitchService
+        .getCharacteristic(ProgrammableSwitchEvent)
+        .setProps({
+          maxValue: ProgrammableSwitchEvent.SINGLE_PRESS,
+        })
+    }
 
     // Battery Service
     if (device.batteryLevel !== null) {
@@ -144,7 +372,8 @@ export class Intercom extends BaseDataAccessory<RingIntercom> {
     this.registerCharacteristic({
       characteristicType: Characteristic.Model,
       serviceType: Service.AccessoryInformation,
-      getValue: () => 'Intercom Handset Audio',
+      getValue: () =>
+        isIntercomVideo ? 'Ring Intercom Video' : 'Ring Intercom',
     })
     this.registerCharacteristic({
       characteristicType: Characteristic.SerialNumber,

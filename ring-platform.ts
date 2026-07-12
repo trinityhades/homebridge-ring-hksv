@@ -435,11 +435,20 @@ export class RingPlatform implements DynamicPlatformPlugin {
           debugPrefix = debug ? 'TEST ' : '',
           hapDevices = allDevices.map((device) => {
             const isCamera = device instanceof RingCamera,
+              isIntercomVideo =
+                device instanceof RingIntercom &&
+                device.deviceType === 'intercom_handset_video',
               cameraIdentitySalt =
                 isCamera && config.externalCameraIdSalt
                   ? `-${config.externalCameraIdSalt}`
                   : '',
-              cameraIdDifferentiator = isCamera ? 'camera' : '', // this forces bridged cameras from old version of the plugin to be seen as "stale"
+              // 'camera' forces bridged cameras from old plugin version to be seen as "stale"
+              // 'intercam' gives Ring Intercom Video a distinct external-accessory UUID
+              cameraIdDifferentiator = isCamera
+                ? 'camera'
+                : isIntercomVideo
+                  ? 'intercam'
+                  : '',
               AccessoryClass = (
                 device instanceof RingCamera
                   ? Camera
@@ -454,6 +463,7 @@ export class RingPlatform implements DynamicPlatformPlugin {
               deviceType: device.deviceType as string,
               device: device as any,
               isCamera,
+              isIntercomVideo,
               id:
                 device.id.toString() +
                 cameraIdDifferentiator +
@@ -473,6 +483,7 @@ export class RingPlatform implements DynamicPlatformPlugin {
             deviceType: securityPanel.deviceType,
             device: securityPanel,
             isCamera: false,
+            isIntercomVideo: false,
             id: securityPanel.id.toString() + 'panic' + accessoryIdSuffix,
             name: 'Panic Buttons' + accessoryNameSuffix,
             AccessoryClass: PanicButtons,
@@ -487,6 +498,7 @@ export class RingPlatform implements DynamicPlatformPlugin {
             deviceType: 'location.mode',
             device: location,
             isCamera: false,
+            isIntercomVideo: false,
             id: location.id + 'mode' + accessoryIdSuffix,
             name: location.name + ' Mode' + accessoryNameSuffix,
             AccessoryClass: LocationModeSwitch,
@@ -497,7 +509,15 @@ export class RingPlatform implements DynamicPlatformPlugin {
           `Configuring ${cameras.length} cameras and ${hapDevices.length} devices for location "${location.name}" - locationId: ${location.id}`,
         )
         hapDevices.forEach(
-          ({ deviceType, device, isCamera, id, name, AccessoryClass }) => {
+          ({
+            deviceType,
+            device,
+            isCamera,
+            isIntercomVideo,
+            id,
+            name,
+            AccessoryClass,
+          }) => {
             const uuid = hap.uuid.generate(debugPrefix + id),
               displayName = debugPrefix + name
 
@@ -526,17 +546,26 @@ export class RingPlatform implements DynamicPlatformPlugin {
             }
 
             const createHomebridgeAccessory = () => {
+                const category = isCamera
+                  ? hap.Categories.CAMERA
+                  : isIntercomVideo
+                    ? hap.Categories.VIDEO_DOORBELL
+                    : hap.Categories.SECURITY_SYSTEM
+
                 const accessory = new api.platformAccessory(
                   displayName,
                   uuid,
-                  isCamera
-                    ? hap.Categories.CAMERA
-                    : hap.Categories.SECURITY_SYSTEM,
+                  category,
                 )
 
                 if (isCamera) {
                   logInfo(
                     `Configured camera ${uuid} ${deviceType} ${displayName}`,
+                  )
+                  externalAccessories.push(accessory)
+                } else if (isIntercomVideo) {
+                  logInfo(
+                    `Configured Ring Intercom Video ${uuid} ${deviceType} ${displayName}`,
                   )
                   externalAccessories.push(accessory)
                 } else {
